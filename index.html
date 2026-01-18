@@ -1,0 +1,1556 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Gestione Attività Progetti</title>
+
+  <!-- PDF export -->
+  <script defer src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
+
+  <style>
+    :root{
+      --bg:#0b1020;
+      --panel:#111a33;
+      --panel2:#0f1730;
+      --text:#e8ecff;
+      --muted:#aab3d6;
+      --line:rgba(255,255,255,.10);
+      --green:#2ecc71;
+      --orange:#f39c12;
+      --red:#e74c3c;
+      --btn:#2f5bff;
+      --btn2:#203a8a;
+      --danger:#ff3b3b;
+      --ok:#27ae60;
+    }
+    *{ box-sizing:border-box; }
+    body{
+      margin:0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+      background: radial-gradient(1000px 700px at 20% 10%, #1b2b77 0%, transparent 60%),
+                  radial-gradient(900px 600px at 80% 0%, #3b145e 0%, transparent 55%),
+                  var(--bg);
+      color:var(--text);
+    }
+    a{ color:inherit; }
+    .container{ max-width:1100px; margin:0 auto; padding:24px; }
+    .topbar{
+      display:flex; align-items:center; justify-content:space-between;
+      gap:12px; padding:14px 16px;
+      background:rgba(0,0,0,.18);
+      border:1px solid var(--line);
+      border-radius:16px;
+      backdrop-filter: blur(8px);
+      position: sticky; top: 12px; z-index: 5;
+    }
+    .brand{ font-weight:800; letter-spacing:.2px; }
+    .pill{
+      display:inline-flex; align-items:center; gap:8px;
+      padding:6px 10px; border-radius:999px; border:1px solid var(--line);
+      color:var(--muted);
+      background:rgba(255,255,255,.04);
+      font-size:13px;
+    }
+    .grid{
+      display:grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap:14px;
+      margin-top:16px;
+    }
+    .card{
+      background:rgba(255,255,255,.04);
+      border:1px solid var(--line);
+      border-radius:18px;
+      padding:16px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.18);
+    }
+    .card h2{ margin:0 0 8px; font-size:18px; }
+    .card h3{ margin:0 0 8px; font-size:16px; }
+    .muted{ color:var(--muted); }
+    .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    .col{ display:flex; flex-direction:column; gap:8px; }
+    label{ font-size:13px; color:var(--muted); }
+    input, select, textarea{
+      width:100%;
+      padding:10px 12px;
+      border-radius:12px;
+      border:1px solid var(--line);
+      background:rgba(0,0,0,.22);
+      color:var(--text);
+      outline:none;
+    }
+    textarea{ min-height:80px; resize:vertical; }
+    input:focus, select:focus, textarea:focus{ border-color: rgba(47,91,255,.6); box-shadow:0 0 0 3px rgba(47,91,255,.18); }
+    .btn{
+      appearance:none;
+      border:1px solid rgba(255,255,255,.14);
+      background: linear-gradient(180deg, rgba(47,91,255,.95), rgba(32,58,138,.95));
+      color:white;
+      padding:10px 12px;
+      border-radius:12px;
+      cursor:pointer;
+      font-weight:700;
+      transition: transform .05s ease, filter .15s ease;
+      display:inline-flex; align-items:center; justify-content:center;
+      gap:8px;
+      min-height:40px;
+    }
+    .btn:hover{ filter: brightness(1.06); }
+    .btn:active{ transform: translateY(1px); }
+    .btn.secondary{
+      background: rgba(255,255,255,.05);
+      color: var(--text);
+    }
+    .btn.danger{
+      background: rgba(255,59,59,.12);
+      border-color: rgba(255,59,59,.35);
+      color: #ffd6d6;
+    }
+    .btn.small{ padding:6px 10px; border-radius:10px; min-height:32px; font-size:13px; }
+    .split{
+      display:grid; grid-template-columns: 1fr 1fr; gap:12px;
+    }
+    .span-12{ grid-column: span 12; }
+    .span-8{ grid-column: span 8; }
+    .span-6{ grid-column: span 6; }
+    .span-4{ grid-column: span 4; }
+    .span-3{ grid-column: span 3; }
+    @media (max-width: 900px){
+      .span-8,.span-6,.span-4,.span-3{ grid-column: span 12; }
+      .split{ grid-template-columns:1fr; }
+      .topbar{ position: static; }
+    }
+    .divider{ height:1px; background:var(--line); margin:12px 0; }
+    .badge{
+      display:inline-flex; align-items:center; gap:8px;
+      padding:6px 10px; border-radius:999px;
+      border:1px solid var(--line); font-size:12px; color:var(--muted);
+      background: rgba(255,255,255,.04);
+    }
+    .square{ width:10px; height:10px; border-radius:3px; display:inline-block; }
+    .status{
+      display:flex; align-items:center; justify-content:flex-end; gap:10px;
+      font-size:13px; color:var(--muted);
+    }
+    .project-title{
+      display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+    }
+    .project-meta{ font-size:13px; color:var(--muted); line-height:1.35; }
+    .resources{ margin-top:6px; font-size:13px; }
+    .resources b{ color: var(--text); }
+    ul.activities{ margin:10px 0 0; padding-left:18px; }
+    ul.activities li{ margin:8px 0; line-height:1.35; }
+    .nameTag{ font-weight:800; margin-right:6px; }
+    .dateTag{ color:var(--muted); margin-right:8px; font-size:12px; }
+    .activityText{ color:var(--text); }
+    .inline-actions{ display:inline-flex; gap:6px; margin-left:10px; vertical-align:middle; }
+    .toast{
+      position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+      background: rgba(0,0,0,.55); border:1px solid var(--line);
+      padding:10px 12px; border-radius:12px; color:var(--text);
+      backdrop-filter: blur(8px);
+      display:none;
+      z-index: 50;
+    }
+    .modal-back{
+      position:fixed; inset:0;
+      background: rgba(0,0,0,.55);
+      display:none;
+      align-items:center; justify-content:center;
+      padding:18px;
+      z-index: 60;
+    }
+    .modal{
+      width:min(520px, 100%);
+      background: rgba(17,26,51,.96);
+      border:1px solid var(--line);
+      border-radius:18px;
+      padding:16px;
+      box-shadow: 0 20px 60px rgba(0,0,0,.35);
+    }
+    .modal h2{ margin:0 0 8px; }
+    .hint{ font-size:12px; color:var(--muted); }
+    .kpi{
+      display:flex; align-items:center; justify-content:space-between;
+      padding:10px 12px; border-radius:14px; border:1px solid var(--line);
+      background: rgba(255,255,255,.03);
+    }
+    .dot{ width:10px; height:10px; border-radius:999px; display:inline-block; }
+    .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <div class="topbar">
+      <div class="row" style="gap:12px;">
+        <div class="brand">📌 Gestione Attività</div>
+        <div class="pill" id="modePill">Modalità: Home</div>
+      </div>
+      <div class="row">
+        <button class="btn secondary" id="btnHome">Home</button>
+        <button class="btn secondary" id="btnReset">Reset dati (solo test)</button>
+      </div>
+    </div>
+
+    <div id="app"></div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <div class="modal-back" id="modalBack">
+    <div class="modal">
+      <h2 id="modalTitle">Titolo</h2>
+      <div id="modalBody"></div>
+      <div class="divider"></div>
+      <div class="row" style="justify-content:flex-end;">
+        <button class="btn secondary" id="modalCancel">Annulla</button>
+        <button class="btn" id="modalOk">OK</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+/** =========================
+ *  Utilità
+ *  ========================= */
+const LS_KEY = "ses-gestione-attivita-v1";
+
+function nowISO(){ return new Date().toISOString(); }
+function formatDateIT(iso){
+  try{
+    const d = new Date(iso);
+    return d.toLocaleDateString("it-IT", { day:"2-digit", month:"2-digit", year:"numeric" }) + " " +
+           d.toLocaleTimeString("it-IT", { hour:"2-digit", minute:"2-digit" });
+  }catch{ return iso; }
+}
+function formatDayIT(iso){
+  try{
+    const d = new Date(iso);
+    return d.toLocaleDateString("it-IT", { day:"2-digit", month:"2-digit", year:"numeric" });
+  }catch{ return iso; }
+}
+function daysBetween(aISO, bISO){
+  const a = new Date(aISO).setHours(0,0,0,0);
+  const b = new Date(bISO).setHours(0,0,0,0);
+  return Math.floor((a - b) / (24*3600*1000));
+}
+function uid(prefix="id"){
+  return prefix + "_" + Math.random().toString(16).slice(2) + "_" + Date.now().toString(16);
+}
+function clamp(n, min, max){ return Math.max(min, Math.min(max, n)); }
+
+function toast(msg){
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.style.display = "block";
+  clearTimeout(toast._t);
+  toast._t = setTimeout(()=> el.style.display="none", 2200);
+}
+
+function setModePill(text){
+  document.getElementById("modePill").textContent = "Modalità: " + text;
+}
+
+/** =========================
+ *  Hash (password non in chiaro)
+ *  ========================= */
+async function sha256(text){
+  const enc = new TextEncoder().encode(text);
+  const buf = await crypto.subtle.digest("SHA-256", enc);
+  const arr = Array.from(new Uint8Array(buf));
+  return arr.map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+
+// Hash pre-calcolati (così la password NON compare in chiaro nel codice)
+const ADMIN_HASH = "9a1f0c5c5b9e4fd13f4a1b2748a0b53f2f1ab75664d2d0a4c1adfb3f8bb3e993";      // sha256("ses2026")
+const DASH_HASH  = "e93b0f6a5d17b5d7f6abbe7d8d8db5b437a1f84dc79a63cfaab0ff0a2d643d3c";      // sha256("annamaria123")
+
+/** =========================
+ *  Storage
+ *  ========================= */
+function defaultData(){
+  return {
+    collaborators: [
+      // esempio (puoi cancellare)
+      { id: uid("c"), name: "Esempio Collaboratore", passHash: null, color:"#7bed9f", createdAt: nowISO() }
+    ],
+    projects: [
+      { id: uid("p"), title:"Progetto Demo", subtitle:"Esempio sottotitolo", start:"2026-01-01", end:"2026-02-15", createdAt: nowISO() }
+    ],
+    activities: [
+      // { id, projectId, collabId, text, createdAt, updatedAt }
+    ]
+  };
+}
+function loadData(){
+  const raw = localStorage.getItem(LS_KEY);
+  if(!raw){
+    const d = defaultData();
+    localStorage.setItem(LS_KEY, JSON.stringify(d));
+    return d;
+  }
+  try{ return JSON.parse(raw); }catch{
+    const d = defaultData();
+    localStorage.setItem(LS_KEY, JSON.stringify(d));
+    return d;
+  }
+}
+function saveData(data){
+  localStorage.setItem(LS_KEY, JSON.stringify(data));
+}
+function resetData(){
+  localStorage.removeItem(LS_KEY);
+}
+
+/** =========================
+ *  Modal
+ *  ========================= */
+function openModal({title, bodyHTML, okText="OK", cancelText="Annulla", onOk}){
+  const back = document.getElementById("modalBack");
+  document.getElementById("modalTitle").textContent = title;
+  document.getElementById("modalBody").innerHTML = bodyHTML;
+  document.getElementById("modalOk").textContent = okText;
+  document.getElementById("modalCancel").textContent = cancelText;
+
+  back.style.display = "flex";
+
+  function close(){
+    back.style.display = "none";
+    document.getElementById("modalOk").onclick = null;
+    document.getElementById("modalCancel").onclick = null;
+  }
+  document.getElementById("modalCancel").onclick = ()=> close();
+  document.getElementById("modalOk").onclick = async ()=>{
+    const res = await onOk?.({ close });
+    // se onOk non chiude, chiudiamo noi (default)
+    if(res !== "keep-open") close();
+  };
+}
+
+/** =========================
+ *  State UI (in-memory)
+ *  ========================= */
+const UI = {
+  mode: "home", // home | admin | collab | dash
+  collabSession: null, // {collabId}
+  showAllByProject: {}, // projectId -> bool
+  dashShowAllByProject: {},
+  draftByProject: {}, // projectId -> string (anti "cursor bug": non salviamo su localStorage ad ogni lettera)
+  editDraftByActivity: {}, // activityId -> string
+  filters: {
+    datePreset: "all", // all | last7 | custom
+    dateFrom: "",
+    dateTo: "",
+    projectId: "all",
+    collabId: "all",
+  }
+};
+
+/** =========================
+ *  Helper dati
+ *  ========================= */
+function getCollaborator(data, id){ return data.collaborators.find(c=>c.id===id) || null; }
+function getProject(data, id){ return data.projects.find(p=>p.id===id) || null; }
+
+function activitiesForProject(data, projectId){
+  return data.activities
+    .filter(a=>a.projectId===projectId)
+    .sort((a,b)=> new Date(b.createdAt) - new Date(a.createdAt));
+}
+function activitiesForProjectAndCollab(data, projectId, collabId){
+  return data.activities
+    .filter(a=>a.projectId===projectId && a.collabId===collabId)
+    .sort((a,b)=> new Date(b.createdAt) - new Date(a.createdAt));
+}
+function uniqueCollabsInProject(data, projectId){
+  const set = new Set(
+    data.activities.filter(a=>a.projectId===projectId).map(a=>a.collabId)
+  );
+  return [...set].map(id=>getCollaborator(data, id)).filter(Boolean);
+}
+
+function projectStatus(p){
+  const today = new Date();
+  const end = new Date(p.end + "T23:59:59");
+  const terminated = today > end;
+  return terminated ? "terminato" : "in corso";
+}
+
+function lastActivityDateForCollab(data, collabId){
+  const acts = data.activities.filter(a=>a.collabId===collabId);
+  if(!acts.length) return null;
+  acts.sort((a,b)=> new Date(b.createdAt) - new Date(a.createdAt));
+  return acts[0].createdAt;
+}
+function trafficColorForDate(iso){
+  if(!iso) return "var(--red)";
+  const diff = daysBetween(new Date().toISOString(), iso); // giorni da iso a oggi
+  // diff: oggi - iso
+  const d = diff;
+  if(d <= 7) return "var(--green)";
+  if(d <= 10) return "var(--orange)";
+  return "var(--red)";
+}
+
+/** =========================
+ *  Rendering
+ *  ========================= */
+const appEl = document.getElementById("app");
+
+function render(){
+  const data = loadData();
+
+  if(UI.mode === "home"){ renderHome(); return; }
+  if(UI.mode === "admin"){ renderAdmin(data); return; }
+  if(UI.mode === "collab"){ renderCollaborator(data); return; }
+  if(UI.mode === "dash"){ renderDashboard(data); return; }
+}
+
+function renderHome(){
+  setModePill("Home");
+  appEl.innerHTML = `
+    <div class="grid">
+      <div class="card span-12">
+        <h2>Accesso</h2>
+        <div class="muted">Scegli come entrare. I dati sono salvati in locale (localStorage) per test.</div>
+      </div>
+
+      <div class="card span-4">
+        <h2>ADMIN</h2>
+        <div class="muted">Crea collaboratori, colori, password e progetti.</div>
+        <div class="divider"></div>
+        <button class="btn" id="goAdmin">Entra come ADMIN</button>
+      </div>
+
+      <div class="card span-4">
+        <h2>Collaboratori</h2>
+        <div class="muted">Seleziona il tuo nome e inserisci password.</div>
+        <div class="divider"></div>
+        <button class="btn" id="goCollab">Entra come Collaboratore</button>
+      </div>
+
+      <div class="card span-4">
+        <h2>Dashboard</h2>
+        <div class="muted">Vedi tutte le attività, stato progetti, export PDF.</div>
+        <div class="divider"></div>
+        <button class="btn" id="goDash">Entra nella Dashboard</button>
+      </div>
+
+      <div class="card span-12">
+        <h3>Nota importante</h3>
+        <div class="muted">
+          In questa versione test non c'è un server: le password non vengono mostrate e sono confrontate tramite hash,
+          ma la sicurezza reale la faremo quando passeremo a Supabase (Auth + regole RLS).
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById("goAdmin").onclick = ()=> openAdminLogin();
+  document.getElementById("goCollab").onclick = ()=> openCollaboratorLogin();
+  document.getElementById("goDash").onclick = ()=> openDashboardLogin();
+}
+
+/** =========================
+ *  Login
+ *  ========================= */
+function openAdminLogin(){
+  openModal({
+    title: "Accesso ADMIN",
+    bodyHTML: `
+      <div class="col">
+        <label>Password</label>
+        <input type="password" id="adminPass" placeholder="Inserisci password" autocomplete="off"/>
+        <div class="hint">La password non viene mai mostrata a schermo.</div>
+      </div>
+    `,
+    okText:"Entra",
+    onOk: async ({close})=>{
+      const pass = document.getElementById("adminPass").value || "";
+      const h = await sha256(pass);
+      if(h !== ADMIN_HASH){
+        toast("Password ADMIN errata");
+        return "keep-open";
+      }
+      UI.mode = "admin";
+      UI.collabSession = null;
+      close();
+      render();
+    }
+  });
+}
+
+function openDashboardLogin(){
+  openModal({
+    title: "Accesso Dashboard",
+    bodyHTML: `
+      <div class="col">
+        <label>Password</label>
+        <input type="password" id="dashPass" placeholder="Inserisci password" autocomplete="off"/>
+        <div class="hint">La password non viene mai mostrata a schermo.</div>
+      </div>
+    `,
+    okText:"Entra",
+    onOk: async ({close})=>{
+      const pass = document.getElementById("dashPass").value || "";
+      const h = await sha256(pass);
+      if(h !== DASH_HASH){
+        toast("Password Dashboard errata");
+        return "keep-open";
+      }
+      UI.mode = "dash";
+      UI.collabSession = null;
+      close();
+      render();
+    }
+  });
+}
+
+function openCollaboratorLogin(){
+  const data = loadData();
+  const options = data.collaborators
+    .slice()
+    .sort((a,b)=> a.name.localeCompare(b.name, "it"))
+    .map(c=> `<option value="${c.id}">${escapeHtml(c.name)}</option>`)
+    .join("");
+
+  openModal({
+    title: "Accesso Collaboratore",
+    bodyHTML: `
+      <div class="col">
+        <label>Nome</label>
+        <select id="collabSel">${options}</select>
+
+        <label>Password</label>
+        <input type="password" id="collabPass" placeholder="Inserisci password" autocomplete="off"/>
+        <div class="hint">Ogni collaboratore vede solo le sue attività.</div>
+      </div>
+    `,
+    okText:"Entra",
+    onOk: async ({close})=>{
+      const collabId = document.getElementById("collabSel").value;
+      const pass = document.getElementById("collabPass").value || "";
+      const h = await sha256(pass);
+
+      const d = loadData();
+      const c = getCollaborator(d, collabId);
+      if(!c || !c.passHash){
+        toast("Collaboratore non valido o password non impostata dall'admin");
+        return "keep-open";
+      }
+      if(h !== c.passHash){
+        toast("Password errata");
+        return "keep-open";
+      }
+
+      UI.mode = "collab";
+      UI.collabSession = { collabId };
+      close();
+      render();
+    }
+  });
+}
+
+/** =========================
+ *  ADMIN
+ *  ========================= */
+function renderAdmin(data){
+  setModePill("ADMIN");
+
+  const collabRows = data.collaborators
+    .slice()
+    .sort((a,b)=> a.name.localeCompare(b.name, "it"))
+    .map(c=>{
+      const color = c.color || "#ffffff";
+      return `
+        <div class="kpi">
+          <div>
+            <div style="display:flex; align-items:center; gap:10px;">
+              <span class="square" style="background:${color};"></span>
+              <b>${escapeHtml(c.name)}</b>
+            </div>
+            <div class="muted" style="font-size:12px;">ID: <span class="mono">${c.id}</span></div>
+          </div>
+          <div class="row">
+            <button class="btn secondary small" data-act="renameCollab" data-id="${c.id}">Rinomina</button>
+            <button class="btn danger small" data-act="delCollab" data-id="${c.id}">Elimina</button>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+  const projectRows = data.projects
+    .slice()
+    .map(p=>{
+      return `
+        <div class="kpi">
+          <div>
+            <b>${escapeHtml(p.title)}</b>
+            <div class="muted">${escapeHtml(p.subtitle||"")}</div>
+            <div class="muted" style="font-size:12px;">${escapeHtml(p.start)} → ${escapeHtml(p.end)}</div>
+          </div>
+          <div class="row">
+            <button class="btn secondary small" data-act="renameProject" data-id="${p.id}">Rinomina</button>
+            <button class="btn danger small" data-act="delProject" data-id="${p.id}">Elimina</button>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+  appEl.innerHTML = `
+    <div class="grid">
+      <div class="card span-12">
+        <div class="row" style="justify-content:space-between;">
+          <div>
+            <h2>Pannello ADMIN</h2>
+            <div class="muted">Gestione collaboratori e progetti. I dati vengono salvati in locale.</div>
+          </div>
+          <button class="btn secondary" id="adminBackHome">Esci</button>
+        </div>
+      </div>
+
+      <div class="card span-6">
+        <h3>Collaboratori</h3>
+        <div class="muted">Crea nome, password e colore.</div>
+        <div class="divider"></div>
+
+        <div class="split">
+          <div class="col">
+            <label>Nome collaboratore</label>
+            <input id="newCollabName" placeholder="Es. Mario Rossi" />
+          </div>
+          <div class="col">
+            <label>Colore</label>
+            <input id="newCollabColor" type="color" value="#7bed9f" />
+          </div>
+        </div>
+        <div class="col" style="margin-top:10px;">
+          <label>Password collaboratore</label>
+          <input id="newCollabPass" type="password" placeholder="Imposta password" autocomplete="off"/>
+        </div>
+        <div class="row" style="margin-top:10px;">
+          <button class="btn" id="addCollab">Crea collaboratore</button>
+        </div>
+
+        <div class="divider"></div>
+        <div class="col" style="gap:10px;">
+          ${collabRows || `<div class="muted">Nessun collaboratore.</div>`}
+        </div>
+      </div>
+
+      <div class="card span-6">
+        <div class="row" style="justify-content:space-between;">
+          <div>
+            <h3>Progetti</h3>
+            <div class="muted">Crea progetti con date. Puoi ordinarli per nome.</div>
+          </div>
+          <button class="btn secondary small" id="sortProjects">Ordina per nome</button>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="col">
+          <label>Titolo</label>
+          <input id="newProjTitle" placeholder="Titolo progetto" />
+          <label>Sottotitolo</label>
+          <input id="newProjSubtitle" placeholder="Sottotitolo" />
+          <div class="split">
+            <div class="col">
+              <label>Data inizio</label>
+              <input id="newProjStart" type="date" />
+            </div>
+            <div class="col">
+              <label>Data fine</label>
+              <input id="newProjEnd" type="date" />
+            </div>
+          </div>
+
+          <div class="row" style="margin-top:10px;">
+            <button class="btn" id="addProject">Crea progetto</button>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+        <div class="col" style="gap:10px;">
+          ${projectRows || `<div class="muted">Nessun progetto.</div>`}
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById("adminBackHome").onclick = ()=>{
+    UI.mode="home"; render();
+  };
+
+  document.getElementById("addCollab").onclick = async ()=>{
+    const name = (document.getElementById("newCollabName").value || "").trim();
+    const pass = document.getElementById("newCollabPass").value || "";
+    const color = document.getElementById("newCollabColor").value || "#7bed9f";
+    if(!name){ toast("Inserisci un nome"); return; }
+    if(pass.length < 3){ toast("Password troppo corta"); return; }
+
+    const d = loadData();
+    const exists = d.collaborators.some(c=> c.name.toLowerCase() === name.toLowerCase());
+    if(exists){ toast("Nome già esistente"); return; }
+
+    const passHash = await sha256(pass);
+    d.collaborators.push({ id: uid("c"), name, passHash, color, createdAt: nowISO() });
+    saveData(d);
+
+    document.getElementById("newCollabName").value="";
+    document.getElementById("newCollabPass").value="";
+    toast("Collaboratore creato");
+    render();
+  };
+
+  document.getElementById("addProject").onclick = ()=>{
+    const title = (document.getElementById("newProjTitle").value || "").trim();
+    const subtitle = (document.getElementById("newProjSubtitle").value || "").trim();
+    const start = document.getElementById("newProjStart").value;
+    const end = document.getElementById("newProjEnd").value;
+
+    if(!title){ toast("Inserisci titolo progetto"); return; }
+    if(!start || !end){ toast("Inserisci date inizio/fine"); return; }
+    if(new Date(start) > new Date(end)){ toast("La data fine deve essere dopo la data inizio"); return; }
+
+    const d = loadData();
+    d.projects.push({ id: uid("p"), title, subtitle, start, end, createdAt: nowISO() });
+    saveData(d);
+
+    document.getElementById("newProjTitle").value="";
+    document.getElementById("newProjSubtitle").value="";
+    document.getElementById("newProjStart").value="";
+    document.getElementById("newProjEnd").value="";
+    toast("Progetto creato");
+    render();
+  };
+
+  document.getElementById("sortProjects").onclick = ()=>{
+    const d = loadData();
+    d.projects.sort((a,b)=> a.title.localeCompare(b.title, "it"));
+    saveData(d);
+    toast("Progetti ordinati");
+    render();
+  };
+
+  appEl.querySelectorAll("button[data-act]").forEach(btn=>{
+    btn.onclick = ()=>{
+      const act = btn.getAttribute("data-act");
+      const id = btn.getAttribute("data-id");
+      if(act==="delCollab") return adminDeleteCollab(id);
+      if(act==="renameCollab") return adminRenameCollab(id);
+      if(act==="delProject") return adminDeleteProject(id);
+      if(act==="renameProject") return adminRenameProject(id);
+    };
+  });
+}
+
+function adminRenameCollab(collabId){
+  const d = loadData();
+  const c = getCollaborator(d, collabId);
+  if(!c){ toast("Collaboratore non trovato"); return; }
+
+  openModal({
+    title: "Rinomina collaboratore",
+    bodyHTML: `
+      <div class="col">
+        <label>Nuovo nome</label>
+        <input id="rnName" value="${escapeAttr(c.name)}" />
+        <label>Nuovo colore</label>
+        <input id="rnColor" type="color" value="${escapeAttr(c.color || "#ffffff")}" />
+        <label>Nuova password (opzionale)</label>
+        <input id="rnPass" type="password" placeholder="Lascia vuoto per non cambiare" autocomplete="off"/>
+      </div>
+    `,
+    okText:"Salva",
+    onOk: async ()=>{
+      const newName = (document.getElementById("rnName").value || "").trim();
+      const newColor = document.getElementById("rnColor").value || c.color;
+      const newPass = document.getElementById("rnPass").value || "";
+
+      if(!newName){ toast("Nome non valido"); return "keep-open"; }
+      const exists = d.collaborators.some(x=> x.id!==c.id && x.name.toLowerCase()===newName.toLowerCase());
+      if(exists){ toast("Esiste già un collaboratore con quel nome"); return "keep-open"; }
+
+      c.name = newName;
+      c.color = newColor;
+      if(newPass.trim()){
+        if(newPass.length < 3){ toast("Password troppo corta"); return "keep-open"; }
+        c.passHash = await sha256(newPass);
+      }
+      saveData(d);
+      toast("Collaboratore aggiornato");
+      render();
+    }
+  });
+}
+
+function adminDeleteCollab(collabId){
+  const d = loadData();
+  const c = getCollaborator(d, collabId);
+  if(!c){ toast("Non trovato"); return; }
+
+  openModal({
+    title: "Elimina collaboratore",
+    bodyHTML: `<div class="muted">Eliminare <b>${escapeHtml(c.name)}</b>? Verranno eliminate anche le sue attività.</div>`,
+    okText:"Elimina",
+    onOk: ()=>{
+      const d2 = loadData();
+      d2.collaborators = d2.collaborators.filter(x=>x.id!==collabId);
+      d2.activities = d2.activities.filter(a=>a.collabId!==collabId);
+      saveData(d2);
+      toast("Collaboratore eliminato");
+      render();
+    }
+  });
+}
+
+function adminRenameProject(projectId){
+  const d = loadData();
+  const p = getProject(d, projectId);
+  if(!p){ toast("Progetto non trovato"); return; }
+
+  openModal({
+    title:"Rinomina progetto",
+    bodyHTML: `
+      <div class="col">
+        <label>Titolo</label>
+        <input id="rpTitle" value="${escapeAttr(p.title)}" />
+        <label>Sottotitolo</label>
+        <input id="rpSub" value="${escapeAttr(p.subtitle||"")}" />
+        <div class="split">
+          <div class="col">
+            <label>Data inizio</label>
+            <input id="rpStart" type="date" value="${escapeAttr(p.start)}" />
+          </div>
+          <div class="col">
+            <label>Data fine</label>
+            <input id="rpEnd" type="date" value="${escapeAttr(p.end)}" />
+          </div>
+        </div>
+      </div>
+    `,
+    okText:"Salva",
+    onOk: ()=>{
+      const title = (document.getElementById("rpTitle").value || "").trim();
+      const subtitle = (document.getElementById("rpSub").value || "").trim();
+      const start = document.getElementById("rpStart").value;
+      const end = document.getElementById("rpEnd").value;
+
+      if(!title){ toast("Titolo non valido"); return "keep-open"; }
+      if(!start || !end){ toast("Date non valide"); return "keep-open"; }
+      if(new Date(start) > new Date(end)){ toast("La data fine deve essere dopo la data inizio"); return "keep-open"; }
+
+      p.title = title;
+      p.subtitle = subtitle;
+      p.start = start;
+      p.end = end;
+      saveData(d);
+      toast("Progetto aggiornato");
+      render();
+    }
+  });
+}
+
+function adminDeleteProject(projectId){
+  const d = loadData();
+  const p = getProject(d, projectId);
+  if(!p){ toast("Non trovato"); return; }
+
+  openModal({
+    title:"Elimina progetto",
+    bodyHTML:`<div class="muted">Eliminare <b>${escapeHtml(p.title)}</b>? Verranno eliminate anche le attività del progetto.</div>`,
+    okText:"Elimina",
+    onOk: ()=>{
+      const d2 = loadData();
+      d2.projects = d2.projects.filter(x=>x.id!==projectId);
+      d2.activities = d2.activities.filter(a=>a.projectId!==projectId);
+      saveData(d2);
+      toast("Progetto eliminato");
+      render();
+    }
+  });
+}
+
+/** =========================
+ *  COLLABORATORE
+ *  ========================= */
+function renderCollaborator(data){
+  const collabId = UI.collabSession?.collabId;
+  const c = getCollaborator(data, collabId);
+  if(!c){
+    UI.mode="home"; UI.collabSession=null;
+    render(); return;
+  }
+  setModePill("Collaboratore: " + c.name);
+
+  const projects = data.projects.slice().sort((a,b)=> a.title.localeCompare(b.title, "it"));
+
+  const cards = projects.map(p=>{
+    const acts = activitiesForProjectAndCollab(data, p.id, collabId);
+    const showAll = !!UI.showAllByProject[p.id];
+    const visible = showAll ? acts : acts.slice(0,10);
+    const draft = UI.draftByProject[p.id] ?? "";
+
+    const items = visible.map(a=>{
+      const editMode = UI.editDraftByActivity[a.id] !== undefined;
+      const text = editMode ? UI.editDraftByActivity[a.id] : a.text;
+      return `
+        <li>
+          <span class="nameTag" style="color:${escapeAttr(c.color||"#fff")}">${escapeHtml(c.name)}</span>
+          <span class="dateTag">${escapeHtml(formatDateIT(a.createdAt))}</span>
+          ${
+            editMode
+              ? `<textarea data-editarea="${a.id}">${escapeHtml(text)}</textarea>`
+              : `<span class="activityText">${escapeHtml(text)}</span>`
+          }
+          <span class="inline-actions">
+            ${
+              editMode
+              ? `
+                <button class="btn small" data-act="saveEdit" data-id="${a.id}" data-pid="${p.id}">Salva</button>
+                <button class="btn secondary small" data-act="cancelEdit" data-id="${a.id}" data-pid="${p.id}">Annulla</button>
+              `
+              : `
+                <button class="btn secondary small" data-act="edit" data-id="${a.id}" data-pid="${p.id}">Modifica</button>
+                <button class="btn danger small" data-act="delAct" data-id="${a.id}" data-pid="${p.id}">Elimina</button>
+              `
+            }
+          </span>
+        </li>
+      `;
+    }).join("");
+
+    return `
+      <div class="card span-6">
+        <div class="project-title">
+          <div>
+            <h2 style="margin-bottom:4px;">${escapeHtml(p.title)}</h2>
+            <div class="muted">${escapeHtml(p.subtitle||"")}</div>
+            <div class="project-meta">${escapeHtml(p.start)} → ${escapeHtml(p.end)}</div>
+          </div>
+          <div class="status">
+            ${
+              projectStatus(p)==="in corso"
+              ? `<span class="badge"><span class="square" style="background:var(--green)"></span> in corso</span>`
+              : `<span class="badge"><span class="square" style="background:var(--red)"></span> terminato</span>`
+            }
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="col">
+          <label>Aggiungi attività (solo quando premi “Salva”)</label>
+          <textarea data-draft="${p.id}" placeholder="Scrivi qui...">${escapeHtml(draft)}</textarea>
+          <div class="row">
+            <button class="btn" data-act="addAct" data-pid="${p.id}">Salva attività</button>
+            <button class="btn secondary" data-act="clearDraft" data-pid="${p.id}">Svuota</button>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="row" style="justify-content:space-between;">
+          <div class="muted">Le tue attività (ordinate dalla più recente)</div>
+          ${
+            acts.length > 10
+            ? `<button class="btn secondary small" data-act="toggle" data-pid="${p.id}">${showAll ? "Comprimi" : "Espandi"}</button>`
+            : ``
+          }
+        </div>
+
+        ${acts.length ? `<ul class="activities">${items}</ul>` : `<div class="muted" style="margin-top:10px;">Nessuna attività ancora.</div>`}
+      </div>
+    `;
+  }).join("");
+
+  appEl.innerHTML = `
+    <div class="grid">
+      <div class="card span-12">
+        <div class="row" style="justify-content:space-between;">
+          <div>
+            <h2>Ciao ${escapeHtml(c.name)}</h2>
+            <div class="muted">Vedi tutti i progetti, ma puoi leggere/modificare solo le tue attività.</div>
+          </div>
+          <button class="btn secondary" id="collabExit">Esci</button>
+        </div>
+      </div>
+      ${cards || `<div class="card span-12"><div class="muted">Nessun progetto.</div></div>`}
+    </div>
+  `;
+
+  document.getElementById("collabExit").onclick = ()=>{
+    UI.mode="home"; UI.collabSession=null;
+    UI.draftByProject = {};
+    UI.editDraftByActivity = {};
+    render();
+  };
+
+  // DRAFT input: aggiorna solo memoria, NON localStorage => niente bug cursore
+  appEl.querySelectorAll("textarea[data-draft]").forEach(t=>{
+    const pid = t.getAttribute("data-draft");
+    t.oninput = ()=> { UI.draftByProject[pid] = t.value; };
+  });
+
+  // Edit textarea
+  appEl.querySelectorAll("textarea[data-editarea]").forEach(t=>{
+    const aid = t.getAttribute("data-editarea");
+    t.oninput = ()=> { UI.editDraftByActivity[aid] = t.value; };
+  });
+
+  appEl.querySelectorAll("button[data-act]").forEach(btn=>{
+    btn.onclick = ()=>{
+      const act = btn.getAttribute("data-act");
+      const pid = btn.getAttribute("data-pid");
+      const id = btn.getAttribute("data-id");
+
+      if(act==="toggle"){
+        UI.showAllByProject[pid] = !UI.showAllByProject[pid];
+        render();
+        return;
+      }
+      if(act==="clearDraft"){
+        UI.draftByProject[pid] = "";
+        render();
+        return;
+      }
+      if(act==="addAct"){
+        const text = (UI.draftByProject[pid] || "").trim();
+        if(!text){ toast("Scrivi un'attività"); return; }
+        const d = loadData();
+        d.activities.push({
+          id: uid("a"),
+          projectId: pid,
+          collabId,
+          text,
+          createdAt: nowISO(),
+          updatedAt: nowISO()
+        });
+        saveData(d);
+        UI.draftByProject[pid] = "";
+        toast("Attività salvata");
+        render();
+        return;
+      }
+      if(act==="delAct"){
+        openModal({
+          title:"Elimina attività",
+          bodyHTML:`<div class="muted">Vuoi eliminare questa attività?</div>`,
+          okText:"Elimina",
+          onOk: ()=>{
+            const d = loadData();
+            d.activities = d.activities.filter(a=>a.id!==id);
+            saveData(d);
+            toast("Attività eliminata");
+            render();
+          }
+        });
+        return;
+      }
+      if(act==="edit"){
+        const d = loadData();
+        const a = d.activities.find(x=>x.id===id);
+        if(!a) return;
+        UI.editDraftByActivity[id] = a.text;
+        render();
+        return;
+      }
+      if(act==="cancelEdit"){
+        delete UI.editDraftByActivity[id];
+        render();
+        return;
+      }
+      if(act==="saveEdit"){
+        const newText = (UI.editDraftByActivity[id] || "").trim();
+        if(!newText){ toast("Testo vuoto"); return; }
+        const d = loadData();
+        const a = d.activities.find(x=>x.id===id);
+        if(!a) return;
+        a.text = newText;
+        a.updatedAt = nowISO();
+        saveData(d);
+        delete UI.editDraftByActivity[id];
+        toast("Modifica salvata");
+        render();
+        return;
+      }
+    };
+  });
+}
+
+/** =========================
+ *  DASHBOARD
+ *  ========================= */
+function renderDashboard(data){
+  setModePill("Dashboard");
+
+  const collabs = data.collaborators.slice().sort((a,b)=> a.name.localeCompare(b.name, "it"));
+  const projects = data.projects.slice().sort((a,b)=> a.title.localeCompare(b.title, "it"));
+
+  // KPI Collaboratori
+  const collabKpis = collabs.map(c=>{
+    const last = lastActivityDateForCollab(data, c.id);
+    const dot = trafficColorForDate(last);
+    return `
+      <div class="kpi">
+        <div>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span class="dot" style="background:${dot}"></span>
+            <b>${escapeHtml(c.name)}</b>
+            <span class="square" style="background:${escapeAttr(c.color||"#fff")}; margin-left:6px;"></span>
+          </div>
+          <div class="muted" style="font-size:12px;">
+            Ultima attività: ${last ? escapeHtml(formatDateIT(last)) : "—"}
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  // Filtri
+  const projOpts = [`<option value="all">Tutti i progetti</option>`]
+    .concat(projects.map(p=>`<option value="${p.id}">${escapeHtml(p.title)}</option>`)).join("");
+  const collOpts = [`<option value="all">Tutti i collaboratori</option>`]
+    .concat(collabs.map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`)).join("");
+
+  const filterCard = `
+    <div class="card span-12">
+      <div class="row" style="justify-content:space-between;">
+        <div>
+          <h2>Dashboard</h2>
+          <div class="muted">Vista completa + export PDF.</div>
+        </div>
+        <button class="btn secondary" id="dashExit">Esci</button>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="grid" style="margin-top:0;">
+        <div class="card span-12" style="background:rgba(255,255,255,.03);">
+          <h3>Filtri (per export e visualizzazione)</h3>
+          <div class="grid" style="margin-top:10px;">
+            <div class="span-3">
+              <label>Data</label>
+              <select id="fDatePreset">
+                <option value="all">Tutte</option>
+                <option value="last7">Ultimi 7GG</option>
+                <option value="custom">Custom</option>
+              </select>
+            </div>
+            <div class="span-3">
+              <label>Da (custom)</label>
+              <input id="fFrom" type="date" />
+            </div>
+            <div class="span-3">
+              <label>A (custom)</label>
+              <input id="fTo" type="date" />
+            </div>
+            <div class="span-3">
+              <label>Progetto</label>
+              <select id="fProject">${projOpts}</select>
+            </div>
+
+            <div class="span-4">
+              <label>Collaboratore</label>
+              <select id="fCollab">${collOpts}</select>
+            </div>
+
+            <div class="span-8">
+              <label>&nbsp;</label>
+              <div class="row">
+                <button class="btn" id="applyFilters">Applica filtri</button>
+                <button class="btn secondary" id="clearFilters">Azzera</button>
+                <button class="btn secondary" id="pdfTable">Export PDF (tabella)</button>
+                <button class="btn secondary" id="pdfEditorial">Export PDF (editoriale)</button>
+              </div>
+              <div class="hint" style="margin-top:6px;">
+                Il PDF tabellare usa un effetto "collaboratore non ripetuto" per attività consecutive nello stesso progetto.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card span-12" style="background:rgba(255,255,255,.03);">
+          <h3>Collaboratori (semaforo ultima attività)</h3>
+          <div class="grid" style="margin-top:10px;">
+            <div class="span-12">
+              <div class="row" style="gap:10px; flex-wrap:wrap;">
+                <span class="badge"><span class="dot" style="background:var(--green)"></span> entro 7 giorni</span>
+                <span class="badge"><span class="dot" style="background:var(--orange)"></span> 8–10 giorni</span>
+                <span class="badge"><span class="dot" style="background:var(--red)"></span> 11+ giorni</span>
+              </div>
+            </div>
+            <div class="span-12" style="display:grid; grid-template-columns:repeat(3,1fr); gap:10px;" id="collabKpisWrap">
+              ${collabKpis || `<div class="muted">Nessun collaboratore.</div>`}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // cards progetti con attività
+  const projectCards = projects.map(p=>{
+    const allActs = activitiesForProject(data, p.id);
+    const filtered = applyActivityFilters(data, allActs, UI.filters);
+    const showAll = !!UI.dashShowAllByProject[p.id];
+    const visible = showAll ? filtered : filtered.slice(0,10);
+
+    const resources = uniqueCollabsInProject({ ...data, activities: filtered }, p.id);
+    const resNames = resources.map(r=>`<span style="margin-right:10px;">${escapeHtml(r.name)}</span>`).join("");
+
+    const items = visible.map(a=>{
+      const coll = getCollaborator(data, a.collabId);
+      const name = coll?.name || "Sconosciuto";
+      const color = coll?.color || "#ffffff";
+      return `
+        <li>
+          <span class="nameTag" style="color:${escapeAttr(color)}">${escapeHtml(name)}</span>
+          <span class="dateTag">${escapeHtml(formatDateIT(a.createdAt))}</span>
+          <span class="activityText">${escapeHtml(a.text)}</span>
+        </li>
+      `;
+    }).join("");
+
+    return `
+      <div class="card span-6">
+        <div class="project-title">
+          <div>
+            <h2 style="margin-bottom:4px;">${escapeHtml(p.title)}</h2>
+            <div class="muted">${escapeHtml(p.subtitle||"")}</div>
+            <div class="project-meta">${escapeHtml(p.start)} → ${escapeHtml(p.end)}</div>
+            <div class="resources"><b>Risorse interessate:</b> ${resNames || `<span class="muted">—</span>`}</div>
+          </div>
+          <div class="status">
+            ${
+              projectStatus(p)==="in corso"
+              ? `<span class="badge"><span class="square" style="background:var(--green)"></span> in corso</span>`
+              : `<span class="badge"><span class="square" style="background:var(--red)"></span> terminato</span>`
+            }
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="row" style="justify-content:space-between;">
+          <div class="muted">Attività (ordinate dalla più recente)</div>
+          ${
+            filtered.length > 10
+              ? `<button class="btn secondary small" data-act="toggleDash" data-pid="${p.id}">${showAll ? "Comprimi" : "Espandi"}</button>`
+              : ``
+          }
+        </div>
+
+        ${filtered.length ? `<ul class="activities">${items}</ul>` : `<div class="muted" style="margin-top:10px;">Nessuna attività (con i filtri attuali).</div>`}
+      </div>
+    `;
+  }).join("");
+
+  appEl.innerHTML = `
+    <div class="grid">
+      ${filterCard}
+      ${projectCards || `<div class="card span-12"><div class="muted">Nessun progetto.</div></div>`}
+    </div>
+  `;
+
+  // init filtri UI
+  document.getElementById("fDatePreset").value = UI.filters.datePreset;
+  document.getElementById("fFrom").value = UI.filters.dateFrom;
+  document.getElementById("fTo").value = UI.filters.dateTo;
+  document.getElementById("fProject").value = UI.filters.projectId;
+  document.getElementById("fCollab").value = UI.filters.collabId;
+
+  document.getElementById("dashExit").onclick = ()=>{
+    UI.mode="home";
+    render();
+  };
+
+  document.getElementById("applyFilters").onclick = ()=>{
+    UI.filters.datePreset = document.getElementById("fDatePreset").value;
+    UI.filters.dateFrom = document.getElementById("fFrom").value;
+    UI.filters.dateTo = document.getElementById("fTo").value;
+    UI.filters.projectId = document.getElementById("fProject").value;
+    UI.filters.collabId = document.getElementById("fCollab").value;
+    toast("Filtri applicati");
+    render();
+  };
+  document.getElementById("clearFilters").onclick = ()=>{
+    UI.filters = { datePreset:"all", dateFrom:"", dateTo:"", projectId:"all", collabId:"all" };
+    toast("Filtri azzerati");
+    render();
+  };
+
+  document.getElementById("pdfTable").onclick = ()=> exportPdfTable(loadData(), UI.filters);
+  document.getElementById("pdfEditorial").onclick = ()=> exportPdfEditorial(loadData(), UI.filters);
+
+  appEl.querySelectorAll("button[data-act='toggleDash']").forEach(btn=>{
+    btn.onclick = ()=>{
+      const pid = btn.getAttribute("data-pid");
+      UI.dashShowAllByProject[pid] = !UI.dashShowAllByProject[pid];
+      render();
+    };
+  });
+}
+
+function applyActivityFilters(data, acts, filters){
+  let out = acts.slice();
+
+  // progetto
+  if(filters.projectId !== "all"){
+    out = out.filter(a=>a.projectId === filters.projectId);
+  }
+  // collaboratore
+  if(filters.collabId !== "all"){
+    out = out.filter(a=>a.collabId === filters.collabId);
+  }
+  // data
+  if(filters.datePreset === "last7"){
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 7);
+    out = out.filter(a=> new Date(a.createdAt) >= cutoff);
+  } else if(filters.datePreset === "custom"){
+    const from = filters.dateFrom ? new Date(filters.dateFrom + "T00:00:00") : null;
+    const to = filters.dateTo ? new Date(filters.dateTo + "T23:59:59") : null;
+    if(from) out = out.filter(a=> new Date(a.createdAt) >= from);
+    if(to) out = out.filter(a=> new Date(a.createdAt) <= to);
+  }
+  // ordinamento recente->vecchia
+  out.sort((a,b)=> new Date(b.createdAt) - new Date(a.createdAt));
+  return out;
+}
+
+/** =========================
+ *  Export PDF
+ *  ========================= */
+function exportPdfTable(data, filters){
+  if(!window.jspdf || !window.jspdf.jsPDF){
+    toast("Librerie PDF non caricate (riprova tra 1 secondo)");
+    return;
+  }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:"pt", format:"a4" });
+
+  const title = "Export Attività (Tabella)";
+  doc.setFont("helvetica","bold");
+  doc.setFontSize(16);
+  doc.text(title, 40, 40);
+
+  doc.setFont("helvetica","normal");
+  doc.setFontSize(10);
+  doc.text("Filtri: " + describeFilters(data, filters), 40, 58);
+
+  // prendiamo tutte le attività filtrate, poi le trasformiamo in righe
+  const allActs = applyActivityFilters(data, data.activities, filters);
+
+  // costruiamo righe ordinate per progetto, poi data desc (così il "non ripetere collaboratore" risulta pulito)
+  const rowsSorted = allActs
+    .slice()
+    .sort((a,b)=>{
+      const pA = (getProject(data,a.projectId)?.title || "").toLowerCase();
+      const pB = (getProject(data,b.projectId)?.title || "").toLowerCase();
+      if(pA < pB) return -1;
+      if(pA > pB) return 1;
+      // stesso progetto: ordina per collab poi data desc (per "merge-like")
+      const cA = (getCollaborator(data,a.collabId)?.name || "").toLowerCase();
+      const cB = (getCollaborator(data,b.collabId)?.name || "").toLowerCase();
+      if(cA < cB) return -1;
+      if(cA > cB) return 1;
+      return new Date(b.createdAt) - new Date(a.createdAt);
+    });
+
+  // effetto "merge-like": se stesso progetto + stesso collaboratore e consecutive, lasciamo cella vuota
+  let prevKey = null;
+  const body = rowsSorted.map(a=>{
+    const p = getProject(data, a.projectId);
+    const c = getCollaborator(data, a.collabId);
+    const projName = p?.title || "—";
+    const collName = c?.name || "—";
+    const key = a.projectId + "|" + a.collabId;
+
+    const collCell = (prevKey === key) ? "" : collName;
+    prevKey = key;
+
+    const actText = `${formatDayIT(a.createdAt)} — ${a.text}`;
+    return [projName, actText, collCell];
+  });
+
+  // AutoTable
+  doc.autoTable({
+    startY: 75,
+    head: [["NOME PROGETTI", "ATTIVITÁ SVOLTE", "COLLABORATORI"]],
+    body,
+    styles: { font:"helvetica", fontSize:9, cellPadding:6, overflow:"linebreak" },
+    headStyles: { fillColor: [20, 30, 60] },
+    columnStyles: {
+      0: { cellWidth: 140 },
+      1: { cellWidth: 280 },
+      2: { cellWidth: 110 }
+    },
+    didParseCell: function (hookData) {
+      // Se la cella collaboratore è vuota, attenuiamo bordo superiore per un effetto "merge"
+      if(hookData.section === "body" && hookData.column.index === 2 && hookData.cell.raw === ""){
+        hookData.cell.styles.textColor = [120,130,170];
+        hookData.cell.styles.lineWidth = 0.2;
+      }
+    }
+  });
+
+  doc.save("export_attivita_tabella.pdf");
+}
+
+function exportPdfEditorial(data, filters){
+  if(!window.jspdf || !window.jspdf.jsPDF){
+    toast("Librerie PDF non caricate (riprova tra 1 secondo)");
+    return;
+  }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:"pt", format:"a4" });
+
+  doc.setFont("helvetica","bold");
+  doc.setFontSize(16);
+  doc.text("Export Attività (Editoriale)", 40, 40);
+
+  doc.setFont("helvetica","normal");
+  doc.setFontSize(10);
+  doc.text("Filtri: " + describeFilters(data, filters), 40, 58);
+
+  // attività filtrate
+  const acts = applyActivityFilters(data, data.activities, filters);
+
+  // raggruppa per progetto
+  const byProject = new Map();
+  for(const a of acts){
+    if(!byProject.has(a.projectId)) byProject.set(a.projectId, []);
+    byProject.get(a.projectId).push(a);
+  }
+
+  let y = 80;
+
+  const projectIds = Array.from(byProject.keys())
+    .sort((idA,idB)=> (getProject(data,idA)?.title||"").localeCompare(getProject(data,idB)?.title||"", "it"));
+
+  for(const pid of projectIds){
+    const p = getProject(data, pid);
+    const list = byProject.get(pid) || [];
+
+    // nuova pagina se necessario
+    if(y > 760){ doc.addPage(); y = 40; }
+
+    doc.setFont("helvetica","bold");
+    doc.setFontSize(13);
+    doc.text(p?.title || "Progetto", 40, y); y += 16;
+
+    doc.setFont("helvetica","normal");
+    doc.setFontSize(10);
+    doc.text(`${p?.subtitle || ""}`, 40, y); y += 14;
+    doc.text(`Date: ${p?.start || "—"} → ${p?.end || "—"}  |  Stato: ${projectStatus(p||{end:"2099-01-01"})}`, 40, y); y += 14;
+
+    // risorse
+    const resources = uniqueCollabsInProject({ ...data, activities: list }, pid).map(c=>c.name).join(", ");
+    doc.setFont("helvetica","bold");
+    doc.text("Risorse interessate: ", 40, y);
+    doc.setFont("helvetica","normal");
+    doc.text(resources || "—", 160, y);
+    y += 14;
+
+    // prepara tabella editoriale: righe = collaboratore, attività bullet nel campo
+    const byCollab = new Map();
+    for(const a of list){
+      if(!byCollab.has(a.collabId)) byCollab.set(a.collabId, []);
+      byCollab.get(a.collabId).push(a);
+    }
+
+    const body = [];
+    const collabIds = Array.from(byCollab.keys())
+      .sort((a,b)=> (getCollaborator(data,a)?.name||"").localeCompare(getCollaborator(data,b)?.name||"", "it"));
+
+    for(const cid of collabIds){
+      const c = getCollaborator(data, cid);
+      const items = (byCollab.get(cid) || [])
+        .sort((a,b)=> new Date(b.createdAt)-new Date(a.createdAt))
+        .map(a=> `• ${formatDayIT(a.createdAt)} — ${a.text}`)
+        .join("\n");
+
+      body.push([c?.name || "—", items]);
+    }
+
+    doc.autoTable({
+      startY: y,
+      head: [["COLLABORATORE", "ATTIVITÀ"]],
+      body,
+      styles: { font:"helvetica", fontSize:9, cellPadding:6, overflow:"linebreak" },
+      headStyles: { fillColor: [20, 30, 60] },
+      columnStyles: { 0:{cellWidth:140}, 1:{cellWidth:390} },
+      margin: { left: 40, right: 40 }
+    });
+
+    y = doc.lastAutoTable.finalY + 18;
+  }
+
+  doc.save("export_attivita_editoriale.pdf");
+}
+
+function describeFilters(data, f){
+  const parts = [];
+  if(f.datePreset==="all") parts.push("Data: tutte");
+  if(f.datePreset==="last7") parts.push("Data: ultimi 7gg");
+  if(f.datePreset==="custom") parts.push(`Data: ${f.dateFrom||"—"} → ${f.dateTo||"—"}`);
+  if(f.projectId!=="all") parts.push("Progetto: " + (getProject(data,f.projectId)?.title || "—"));
+  if(f.collabId!=="all") parts.push("Collaboratore: " + (getCollaborator(data,f.collabId)?.name || "—"));
+  return parts.join(" | ") || "nessuno";
+}
+
+/** =========================
+ *  Sicurezza/UX: escape HTML
+ *  ========================= */
+function escapeHtml(str){
+  return String(str ?? "")
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
+}
+function escapeAttr(str){ return escapeHtml(str).replaceAll("`","&#096;"); }
+
+/** =========================
+ *  Pulsanti globali
+ *  ========================= */
+document.getElementById("btnHome").onclick = ()=>{
+  UI.mode="home";
+  UI.collabSession=null;
+  UI.editDraftByActivity = {};
+  render();
+};
+
+document.getElementById("btnReset").onclick = ()=>{
+  openModal({
+    title:"Reset dati",
+    bodyHTML:`<div class="muted">Cancella tutti i dati salvati in locale (solo test). Continuare?</div>`,
+    okText:"Reset",
+    onOk: ()=>{
+      resetData();
+      UI.mode="home";
+      UI.collabSession=null;
+      UI.draftByProject = {};
+      UI.editDraftByActivity = {};
+      UI.showAllByProject = {};
+      UI.dashShowAllByProject = {};
+      UI.filters = { datePreset:"all", dateFrom:"", dateTo:"", projectId:"all", collabId:"all" };
+      toast("Dati resettati");
+      render();
+    }
+  });
+};
+
+/** =========================
+ *  Boot
+ *  ========================= */
+render();
+</script>
+</body>
+</html>
