@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Gestione Attività Progetti</title>
 
+  <!-- Supabase JS (UMD) -->
+  <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+
   <!-- PDF export -->
   <script defer src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
@@ -34,7 +37,6 @@
                   var(--bg);
       color:var(--text);
     }
-    a{ color:inherit; }
     .container{ max-width:1100px; margin:0 auto; padding:24px; }
     .topbar{
       display:flex; align-items:center; justify-content:space-between;
@@ -109,9 +111,7 @@
       color: #ffd6d6;
     }
     .btn.small{ padding:6px 10px; border-radius:10px; min-height:32px; font-size:13px; }
-    .split{
-      display:grid; grid-template-columns: 1fr 1fr; gap:12px;
-    }
+    .split{ display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
     .span-12{ grid-column: span 12; }
     .span-8{ grid-column: span 8; }
     .span-6{ grid-column: span 6; }
@@ -179,6 +179,10 @@
     }
     .dot{ width:10px; height:10px; border-radius:999px; display:inline-block; }
     .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+    .loading{
+      display:flex; align-items:center; justify-content:center;
+      padding:30px; color:var(--muted);
+    }
   </style>
 </head>
 
@@ -191,7 +195,7 @@
       </div>
       <div class="row">
         <button class="btn secondary" id="btnHome">Home</button>
-        <button class="btn secondary" id="btnReset">Reset dati (solo test)</button>
+        <button class="btn secondary" id="btnLogout">Logout</button>
       </div>
     </div>
 
@@ -214,10 +218,40 @@
 
 <script>
 /** =========================
- *  Utilità
+ *  CONFIG: incolla qui i tuoi valori Supabase
  *  ========================= */
-const LS_KEY = "ses-gestione-attivita-v1";
+const SUPABASE_URL = https://racadmooyexenfxylswt.supabase.co;
+const SUPABASE_ANON_KEY = "sb_publishable_HQVc-OsQVHGcQpkwBEillQ_LjzKwMWV";
 
+/** Email fisse per admin/dashboard (password la digiti tu, non è nel codice) */
+const ADMIN_EMAIL = "admin@app.local";
+const DASH_EMAIL  = "dashboard@app.local";
+
+/** =========================
+ *  UI State
+ *  ========================= */
+const UI = {
+  mode: "home", // home | admin | collab | dash
+  collabSession: null, // { collabId, collabUserId, name, color }
+  showAllByProject: {},
+  dashShowAllByProject: {},
+  draftByProject: {},          // IMPORTANTISSIMO: evita bug cursore (non salva su DB mentre scrivi)
+  editDraftByActivity: {},
+  filters: { datePreset:"all", dateFrom:"", dateTo:"", projectId:"all", collabId:"all" },
+  cache: { collaborators: [], projects: [], activities: [] },
+  loading: false
+};
+
+const appEl = document.getElementById("app");
+
+function setModePill(text){ document.getElementById("modePill").textContent = "Modalità: " + text; }
+function toast(msg){
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.style.display = "block";
+  clearTimeout(toast._t);
+  toast._t = setTimeout(()=> el.style.display="none", 2200);
+}
 function nowISO(){ return new Date().toISOString(); }
 function formatDateIT(iso){
   try{
@@ -237,73 +271,15 @@ function daysBetween(aISO, bISO){
   const b = new Date(bISO).setHours(0,0,0,0);
   return Math.floor((a - b) / (24*3600*1000));
 }
-function uid(prefix="id"){
-  return prefix + "_" + Math.random().toString(16).slice(2) + "_" + Date.now().toString(16);
+function escapeHtml(str){
+  return String(str ?? "")
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
 }
-function clamp(n, min, max){ return Math.max(min, Math.min(max, n)); }
-
-function toast(msg){
-  const el = document.getElementById("toast");
-  el.textContent = msg;
-  el.style.display = "block";
-  clearTimeout(toast._t);
-  toast._t = setTimeout(()=> el.style.display="none", 2200);
-}
-
-function setModePill(text){
-  document.getElementById("modePill").textContent = "Modalità: " + text;
-}
-
-/** =========================
- *  Hash (password non in chiaro)
- *  ========================= */
-async function sha256(text){
-  const enc = new TextEncoder().encode(text);
-  const buf = await crypto.subtle.digest("SHA-256", enc);
-  const arr = Array.from(new Uint8Array(buf));
-  return arr.map(b=>b.toString(16).padStart(2,"0")).join("");
-}
-
-// Hash pre-calcolati (così la password NON compare in chiaro nel codice)
-const ADMIN_HASH = "0b7b1d31f1ad198f002c3abf1ba5f3387c4f504fe1f322549918cf76d0965d77"; // sha256("ses2026")
-const DASH_HASH  = "c57c28c79c7d87833a8fe65a9dca5be0627f3f4f6738639e48d26efeb6680dc6"; // sha256("annamaria123")
-
-/** =========================
- *  Storage
- *  ========================= */
-function defaultData(){
-  return {
-    collaborators: [
-      // esempio (puoi cancellare)
-      { id: uid("c"), name: "Esempio Collaboratore", passHash: null, color:"#7bed9f", createdAt: nowISO() }
-    ],
-    projects: [
-      { id: uid("p"), title:"Progetto Demo", subtitle:"Esempio sottotitolo", start:"2026-01-01", end:"2026-02-15", createdAt: nowISO() }
-    ],
-    activities: [
-      // { id, projectId, collabId, text, createdAt, updatedAt }
-    ]
-  };
-}
-function loadData(){
-  const raw = localStorage.getItem(LS_KEY);
-  if(!raw){
-    const d = defaultData();
-    localStorage.setItem(LS_KEY, JSON.stringify(d));
-    return d;
-  }
-  try{ return JSON.parse(raw); }catch{
-    const d = defaultData();
-    localStorage.setItem(LS_KEY, JSON.stringify(d));
-    return d;
-  }
-}
-function saveData(data){
-  localStorage.setItem(LS_KEY, JSON.stringify(data));
-}
-function resetData(){
-  localStorage.removeItem(LS_KEY);
-}
+function escapeAttr(str){ return escapeHtml(str).replaceAll("`","&#096;"); }
 
 /** =========================
  *  Modal
@@ -325,102 +301,301 @@ function openModal({title, bodyHTML, okText="OK", cancelText="Annulla", onOk}){
   document.getElementById("modalCancel").onclick = ()=> close();
   document.getElementById("modalOk").onclick = async ()=>{
     const res = await onOk?.({ close });
-    // se onOk non chiude, chiudiamo noi (default)
     if(res !== "keep-open") close();
   };
 }
 
 /** =========================
- *  State UI (in-memory)
+ *  Supabase init
  *  ========================= */
-const UI = {
-  mode: "home", // home | admin | collab | dash
-  collabSession: null, // {collabId}
-  showAllByProject: {}, // projectId -> bool
-  dashShowAllByProject: {},
-  draftByProject: {}, // projectId -> string (anti "cursor bug": non salviamo su localStorage ad ogni lettera)
-  editDraftByActivity: {}, // activityId -> string
-  filters: {
-    datePreset: "all", // all | last7 | custom
-    dateFrom: "",
-    dateTo: "",
-    projectId: "all",
-    collabId: "all",
-  }
-};
+function getSupabase(){
+  if(!window.supabase) return null;
+  if(!SUPABASE_URL || !SUPABASE_ANON_KEY || SUPABASE_URL.includes("PASTE_")) return null;
+  return window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+}
+const sb = getSupabase();
 
 /** =========================
- *  Helper dati
+ *  DATA ACCESS (Supabase)
  *  ========================= */
-function getCollaborator(data, id){ return data.collaborators.find(c=>c.id===id) || null; }
-function getProject(data, id){ return data.projects.find(p=>p.id===id) || null; }
+async function fetchCollaboratorsPublic(){
+  const { data, error } = await sb
+    .from("collaborators")
+    .select("id,name,color,email,user_id")
+    .order("name", { ascending: true });
+  if(error) throw error;
+  return data || [];
+}
 
-function activitiesForProject(data, projectId){
-  return data.activities
-    .filter(a=>a.projectId===projectId)
-    .sort((a,b)=> new Date(b.createdAt) - new Date(a.createdAt));
+async function fetchProjectsAuth(){
+  const { data, error } = await sb
+    .from("projects")
+    .select("id,title,subtitle,start_date,end_date,created_at")
+    .order("title", { ascending: true });
+  if(error) throw error;
+  return data || [];
 }
-function activitiesForProjectAndCollab(data, projectId, collabId){
-  return data.activities
-    .filter(a=>a.projectId===projectId && a.collabId===collabId)
-    .sort((a,b)=> new Date(b.createdAt) - new Date(a.createdAt));
+
+async function fetchActivitiesForCurrentUser(){
+  const { data, error } = await sb
+    .from("activities")
+    .select("id,project_id,collaborator_id,collaborator_user_id,text,created_at,updated_at")
+    .order("created_at", { ascending: false });
+  if(error) throw error;
+  return data || [];
 }
-function uniqueCollabsInProject(data, projectId){
-  const set = new Set(
-    data.activities.filter(a=>a.projectId===projectId).map(a=>a.collabId)
-  );
-  return [...set].map(id=>getCollaborator(data, id)).filter(Boolean);
+
+async function fetchAllActivitiesAdminDash(){
+  const { data, error } = await sb
+    .from("activities")
+    .select("id,project_id,collaborator_id,collaborator_user_id,text,created_at,updated_at")
+    .order("created_at", { ascending: false });
+  if(error) throw error;
+  return data || [];
 }
+
+async function insertActivity({ projectId, collaboratorId, collaboratorUserId, text }){
+  const { error } = await sb
+    .from("activities")
+    .insert([{ project_id: projectId, collaborator_id: collaboratorId, collaborator_user_id: collaboratorUserId, text }]);
+  if(error) throw error;
+}
+
+async function updateActivity({ id, text }){
+  const { error } = await sb
+    .from("activities")
+    .update({ text })
+    .eq("id", id);
+  if(error) throw error;
+}
+
+async function deleteActivity(id){
+  const { error } = await sb
+    .from("activities")
+    .delete()
+    .eq("id", id);
+  if(error) throw error;
+}
+
+async function adminCreateProject({ title, subtitle, start_date, end_date }){
+  const { error } = await sb.from("projects").insert([{ title, subtitle, start_date, end_date }]);
+  if(error) throw error;
+}
+
+async function adminUpdateProject({ id, title, subtitle, start_date, end_date }){
+  const { error } = await sb.from("projects").update({ title, subtitle, start_date, end_date }).eq("id", id);
+  if(error) throw error;
+}
+
+async function adminDeleteProject(id){
+  const { error } = await sb.from("projects").delete().eq("id", id);
+  if(error) throw error;
+}
+
+async function adminUpdateCollaborator({ id, name, color, email, user_id }){
+  const { error } = await sb.from("collaborators").update({ name, color, email, user_id }).eq("id", id);
+  if(error) throw error;
+}
+
+async function adminCreateCollaboratorRow({ name, color, email, user_id }){
+  // Nota: non creiamo l'utente Auth qui (serve server). Qui creiamo solo la riga.
+  const { error } = await sb.from("collaborators").insert([{ name, color, email, user_id }]);
+  if(error) throw error;
+}
+
+async function adminDeleteCollaborator(id){
+  const { error } = await sb.from("collaborators").delete().eq("id", id);
+  if(error) throw error;
+}
+
+/** =========================
+ *  Helpers
+ *  ========================= */
+function getCollaboratorById(list, id){ return list.find(c=>c.id===id) || null; }
+function getProjectById(list, id){ return list.find(p=>p.id===id) || null; }
 
 function projectStatus(p){
   const today = new Date();
-  const end = new Date(p.end + "T23:59:59");
-  const terminated = today > end;
-  return terminated ? "terminato" : "in corso";
+  const end = new Date(p.end_date + "T23:59:59");
+  return today > end ? "terminato" : "in corso";
 }
 
-function lastActivityDateForCollab(data, collabId){
-  const acts = data.activities.filter(a=>a.collabId===collabId);
-  if(!acts.length) return null;
-  acts.sort((a,b)=> new Date(b.createdAt) - new Date(a.createdAt));
-  return acts[0].createdAt;
+function activitiesForProject(acts, projectId){
+  return acts.filter(a=>a.project_id===projectId).sort((a,b)=> new Date(b.created_at)-new Date(a.created_at));
 }
+
+function activitiesForProjectAndUser(acts, projectId, userId){
+  return acts
+    .filter(a=>a.project_id===projectId && a.collaborator_user_id===userId)
+    .sort((a,b)=> new Date(b.created_at)-new Date(a.created_at));
+}
+
+function uniqueCollabsInProject(acts, collaborators, projectId){
+  const set = new Set(acts.filter(a=>a.project_id===projectId).map(a=>a.collaborator_user_id));
+  return [...set].map(uid => collaborators.find(c=>c.user_id===uid)).filter(Boolean);
+}
+
+function lastActivityDateForCollab(acts, collaboratorUserId){
+  const list = acts.filter(a=>a.collaborator_user_id===collaboratorUserId);
+  if(!list.length) return null;
+  list.sort((a,b)=> new Date(b.created_at) - new Date(a.created_at));
+  return list[0].created_at;
+}
+
 function trafficColorForDate(iso){
   if(!iso) return "var(--red)";
-  const diff = daysBetween(new Date().toISOString(), iso); // giorni da iso a oggi
-  // diff: oggi - iso
-  const d = diff;
-  if(d <= 7) return "var(--green)";
-  if(d <= 10) return "var(--orange)";
+  const diff = daysBetween(new Date().toISOString(), iso);
+  if(diff <= 7) return "var(--green)";
+  if(diff <= 10) return "var(--orange)";
   return "var(--red)";
 }
 
-/** =========================
- *  Rendering
- *  ========================= */
-const appEl = document.getElementById("app");
+function applyActivityFilters(acts, filters){
+  let out = acts.slice();
 
-function render(){
-  const data = loadData();
-
-  if(UI.mode === "home"){ renderHome(); return; }
-  if(UI.mode === "admin"){ renderAdmin(data); return; }
-  if(UI.mode === "collab"){ renderCollaborator(data); return; }
-  if(UI.mode === "dash"){ renderDashboard(data); return; }
+  if(filters.projectId !== "all"){
+    out = out.filter(a=>a.project_id === filters.projectId);
+  }
+  if(filters.collabId !== "all"){
+    // qui usiamo collaborator_user_id
+    out = out.filter(a=>a.collaborator_user_id === filters.collabId);
+  }
+  if(filters.datePreset === "last7"){
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 7);
+    out = out.filter(a=> new Date(a.created_at) >= cutoff);
+  } else if(filters.datePreset === "custom"){
+    const from = filters.dateFrom ? new Date(filters.dateFrom + "T00:00:00") : null;
+    const to = filters.dateTo ? new Date(filters.dateTo + "T23:59:59") : null;
+    if(from) out = out.filter(a=> new Date(a.created_at) >= from);
+    if(to) out = out.filter(a=> new Date(a.created_at) <= to);
+  }
+  out.sort((a,b)=> new Date(b.created_at)-new Date(a.created_at));
+  return out;
 }
 
+/** =========================
+ *  AUTH helpers
+ *  ========================= */
+async function signInWithEmailPassword(email, password){
+  const { data, error } = await sb.auth.signInWithPassword({ email, password });
+  if(error) throw error;
+  return data;
+}
+async function signOut(){
+  await sb.auth.signOut();
+  UI.mode = "home";
+  UI.collabSession = null;
+  UI.draftByProject = {};
+  UI.editDraftByActivity = {};
+  UI.showAllByProject = {};
+  UI.dashShowAllByProject = {};
+}
+
+async function getSession(){
+  const { data } = await sb.auth.getSession();
+  return data.session || null;
+}
+
+async function getMyRole(){
+  // user_roles è accessibile solo all'admin (policy), quindi per dashboard non possiamo leggerlo direttamente.
+  // Quindi: per capire se è dashboard/admin, usiamo un "tentativo" su activities: se riesce a leggere tutti → ok.
+  // In pratica qui gestiamo la UI con "come sei entrato" (admin/dash).
+  return null;
+}
+
+/** =========================
+ *  RENDER controller
+ *  ========================= */
+async function render(){
+  if(!sb){
+    setModePill("Errore configurazione");
+    appEl.innerHTML = `
+      <div class="card span-12">
+        <h2>Configurazione Supabase mancante</h2>
+        <div class="muted">
+          Devi inserire <b>Project URL</b> e <b>anon public key</b> nel file <span class="mono">index.html</span>.
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  UI.loading = true;
+  appEl.innerHTML = `<div class="loading">Caricamento…</div>`;
+
+  try{
+    // Collaborators list può essere letta anche anon (policy)
+    UI.cache.collaborators = await fetchCollaboratorsPublic();
+
+    const session = await getSession();
+
+    // Se non loggato: home
+    if(!session){
+      UI.cache.projects = [];
+      UI.cache.activities = [];
+      UI.mode = "home";
+      UI.loading = false;
+      renderHome();
+      return;
+    }
+
+    // Loggato: carichiamo progetti (richiede authenticated) e attività
+    UI.cache.projects = await fetchProjectsAuth();
+
+    if(UI.mode === "collab"){
+      UI.cache.activities = await fetchActivitiesForCurrentUser(); // policy: solo proprie
+      UI.loading = false;
+      renderCollaborator();
+      return;
+    }
+    if(UI.mode === "admin" || UI.mode === "dash"){
+      UI.cache.activities = await fetchAllActivitiesAdminDash(); // policy: admin/dashboard
+      UI.loading = false;
+      UI.mode === "admin" ? renderAdmin() : renderDashboard();
+      return;
+    }
+
+    // Se siamo loggati ma in modalità home (es. refresh), rimandiamo a Home ma con logout disponibile
+    UI.cache.activities = await fetchActivitiesForCurrentUser().catch(()=>[]);
+    UI.loading = false;
+    UI.mode = "home";
+    renderHome();
+
+  }catch(e){
+    console.error(e);
+    UI.loading = false;
+    appEl.innerHTML = `
+      <div class="card span-12">
+        <h2>Errore</h2>
+        <div class="muted">${escapeHtml(e.message || String(e))}</div>
+        <div class="divider"></div>
+        <div class="muted">Controlla anche che RLS e le policy siano state applicate correttamente.</div>
+      </div>
+    `;
+  }
+}
+
+/** =========================
+ *  HOME + LOGIN
+ *  ========================= */
 function renderHome(){
   setModePill("Home");
+
+  const collabOptions = UI.cache.collaborators
+    .map(c=> `<option value="${c.id}">${escapeHtml(c.name)}</option>`)
+    .join("");
+
   appEl.innerHTML = `
     <div class="grid">
       <div class="card span-12">
         <h2>Accesso</h2>
-        <div class="muted">Scegli come entrare. I dati sono salvati in locale (localStorage) per test.</div>
+        <div class="muted">Ora i dati sono su Supabase. Admin/Dashboard/Collaboratori usano Supabase Auth.</div>
       </div>
 
       <div class="card span-4">
         <h2>ADMIN</h2>
-        <div class="muted">Crea collaboratori, colori, password e progetti.</div>
+        <div class="muted">Accedi con password (utente admin@app.local).</div>
         <div class="divider"></div>
         <button class="btn" id="goAdmin">Entra come ADMIN</button>
       </div>
@@ -434,17 +609,9 @@ function renderHome(){
 
       <div class="card span-4">
         <h2>Dashboard</h2>
-        <div class="muted">Vedi tutte le attività, stato progetti, export PDF.</div>
+        <div class="muted">Accedi con password (utente dashboard@app.local).</div>
         <div class="divider"></div>
         <button class="btn" id="goDash">Entra nella Dashboard</button>
-      </div>
-
-      <div class="card span-12">
-        <h3>Nota importante</h3>
-        <div class="muted">
-          In questa versione test non c'è un server: le password non vengono mostrate e sono confrontate tramite hash,
-          ma la sicurezza reale la faremo quando passeremo a Supabase (Auth + regole RLS).
-        </div>
       </div>
     </div>
   `;
@@ -454,9 +621,6 @@ function renderHome(){
   document.getElementById("goDash").onclick = ()=> openDashboardLogin();
 }
 
-/** =========================
- *  Login
- *  ========================= */
 function openAdminLogin(){
   openModal({
     title: "Accesso ADMIN",
@@ -464,21 +628,22 @@ function openAdminLogin(){
       <div class="col">
         <label>Password</label>
         <input type="password" id="adminPass" placeholder="Inserisci password" autocomplete="off"/>
-        <div class="hint">La password non viene mai mostrata a schermo.</div>
+        <div class="hint">Email usata: admin@app.local (non serve inserirla).</div>
       </div>
     `,
     okText:"Entra",
     onOk: async ({close})=>{
       const pass = document.getElementById("adminPass").value || "";
-      const h = await sha256(pass);
-      if(h !== ADMIN_HASH){
+      try{
+        await signInWithEmailPassword(ADMIN_EMAIL, pass);
+        UI.mode = "admin";
+        UI.collabSession = null;
+        close();
+        await render();
+      }catch(e){
         toast("Password ADMIN errata");
         return "keep-open";
       }
-      UI.mode = "admin";
-      UI.collabSession = null;
-      close();
-      render();
     }
   });
 }
@@ -490,30 +655,28 @@ function openDashboardLogin(){
       <div class="col">
         <label>Password</label>
         <input type="password" id="dashPass" placeholder="Inserisci password" autocomplete="off"/>
-        <div class="hint">La password non viene mai mostrata a schermo.</div>
+        <div class="hint">Email usata: dashboard@app.local (non serve inserirla).</div>
       </div>
     `,
     okText:"Entra",
     onOk: async ({close})=>{
       const pass = document.getElementById("dashPass").value || "";
-      const h = await sha256(pass);
-      if(h !== DASH_HASH){
+      try{
+        await signInWithEmailPassword(DASH_EMAIL, pass);
+        UI.mode = "dash";
+        UI.collabSession = null;
+        close();
+        await render();
+      }catch(e){
         toast("Password Dashboard errata");
         return "keep-open";
       }
-      UI.mode = "dash";
-      UI.collabSession = null;
-      close();
-      render();
     }
   });
 }
 
 function openCollaboratorLogin(){
-  const data = loadData();
-  const options = data.collaborators
-    .slice()
-    .sort((a,b)=> a.name.localeCompare(b.name, "it"))
+  const options = UI.cache.collaborators
     .map(c=> `<option value="${c.id}">${escapeHtml(c.name)}</option>`)
     .join("");
 
@@ -526,30 +689,31 @@ function openCollaboratorLogin(){
 
         <label>Password</label>
         <input type="password" id="collabPass" placeholder="Inserisci password" autocomplete="off"/>
-        <div class="hint">Ogni collaboratore vede solo le sue attività.</div>
+        <div class="hint">La password è quella creata in Supabase → Authentication → Users per quell'email.</div>
       </div>
     `,
     okText:"Entra",
     onOk: async ({close})=>{
       const collabId = document.getElementById("collabSel").value;
       const pass = document.getElementById("collabPass").value || "";
-      const h = await sha256(pass);
 
-      const d = loadData();
-      const c = getCollaborator(d, collabId);
-      if(!c || !c.passHash){
-        toast("Collaboratore non valido o password non impostata dall'admin");
+      const c = getCollaboratorById(UI.cache.collaborators, collabId);
+      if(!c?.email || !c?.user_id){
+        toast("Collaboratore non collegato: compila email + user_id in tabella collaborators (step 3.6).");
         return "keep-open";
       }
-      if(h !== c.passHash){
+
+      try{
+        await signInWithEmailPassword(c.email, pass);
+
+        UI.mode = "collab";
+        UI.collabSession = { collabId: c.id, collabUserId: c.user_id, name: c.name, color: c.color };
+        close();
+        await render();
+      }catch(e){
         toast("Password errata");
         return "keep-open";
       }
-
-      UI.mode = "collab";
-      UI.collabSession = { collabId };
-      close();
-      render();
     }
   });
 }
@@ -557,48 +721,45 @@ function openCollaboratorLogin(){
 /** =========================
  *  ADMIN
  *  ========================= */
-function renderAdmin(data){
+function renderAdmin(){
   setModePill("ADMIN");
 
-  const collabRows = data.collaborators
-    .slice()
-    .sort((a,b)=> a.name.localeCompare(b.name, "it"))
-    .map(c=>{
-      const color = c.color || "#ffffff";
-      return `
-        <div class="kpi">
-          <div>
-            <div style="display:flex; align-items:center; gap:10px;">
-              <span class="square" style="background:${color};"></span>
-              <b>${escapeHtml(c.name)}</b>
-            </div>
-            <div class="muted" style="font-size:12px;">ID: <span class="mono">${c.id}</span></div>
+  const collabRows = UI.cache.collaborators.map(c=>{
+    return `
+      <div class="kpi">
+        <div>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span class="square" style="background:${escapeAttr(c.color||"#fff")}"></span>
+            <b>${escapeHtml(c.name)}</b>
           </div>
-          <div class="row">
-            <button class="btn secondary small" data-act="renameCollab" data-id="${c.id}">Rinomina</button>
-            <button class="btn danger small" data-act="delCollab" data-id="${c.id}">Elimina</button>
+          <div class="muted" style="font-size:12px;">
+            email: ${escapeHtml(c.email||"—")} <br/>
+            user_id: <span class="mono">${escapeHtml(c.user_id||"—")}</span>
           </div>
         </div>
-      `;
-    }).join("");
+        <div class="row">
+          <button class="btn secondary small" data-act="editCollab" data-id="${c.id}">Modifica</button>
+          <button class="btn danger small" data-act="delCollab" data-id="${c.id}">Elimina</button>
+        </div>
+      </div>
+    `;
+  }).join("");
 
-  const projectRows = data.projects
-    .slice()
-    .map(p=>{
-      return `
-        <div class="kpi">
-          <div>
-            <b>${escapeHtml(p.title)}</b>
-            <div class="muted">${escapeHtml(p.subtitle||"")}</div>
-            <div class="muted" style="font-size:12px;">${escapeHtml(p.start)} → ${escapeHtml(p.end)}</div>
-          </div>
-          <div class="row">
-            <button class="btn secondary small" data-act="renameProject" data-id="${p.id}">Rinomina</button>
-            <button class="btn danger small" data-act="delProject" data-id="${p.id}">Elimina</button>
-          </div>
+  const projectRows = UI.cache.projects.map(p=>{
+    return `
+      <div class="kpi">
+        <div>
+          <b>${escapeHtml(p.title)}</b>
+          <div class="muted">${escapeHtml(p.subtitle||"")}</div>
+          <div class="muted" style="font-size:12px;">${escapeHtml(p.start_date)} → ${escapeHtml(p.end_date)}</div>
         </div>
-      `;
-    }).join("");
+        <div class="row">
+          <button class="btn secondary small" data-act="editProject" data-id="${p.id}">Modifica</button>
+          <button class="btn danger small" data-act="delProject" data-id="${p.id}">Elimina</button>
+        </div>
+      </div>
+    `;
+  }).join("");
 
   appEl.innerHTML = `
     <div class="grid">
@@ -606,7 +767,8 @@ function renderAdmin(data){
         <div class="row" style="justify-content:space-between;">
           <div>
             <h2>Pannello ADMIN</h2>
-            <div class="muted">Gestione collaboratori e progetti. I dati vengono salvati in locale.</div>
+            <div class="muted">Gestione progetti e dati collaboratori (nome/colore/email/user_id).</div>
+            <div class="hint">Creazione password/account collaboratori: per ora si fa in Supabase → Authentication → Users (Step 5 lo automatizziamo).</div>
           </div>
           <button class="btn secondary" id="adminBackHome">Esci</button>
         </div>
@@ -614,12 +776,11 @@ function renderAdmin(data){
 
       <div class="card span-6">
         <h3>Collaboratori</h3>
-        <div class="muted">Crea nome, password e colore.</div>
         <div class="divider"></div>
 
         <div class="split">
           <div class="col">
-            <label>Nome collaboratore</label>
+            <label>Nome</label>
             <input id="newCollabName" placeholder="Es. Mario Rossi" />
           </div>
           <div class="col">
@@ -627,12 +788,20 @@ function renderAdmin(data){
             <input id="newCollabColor" type="color" value="#7bed9f" />
           </div>
         </div>
-        <div class="col" style="margin-top:10px;">
-          <label>Password collaboratore</label>
-          <input id="newCollabPass" type="password" placeholder="Imposta password" autocomplete="off"/>
+
+        <div class="split" style="margin-top:10px;">
+          <div class="col">
+            <label>Email (deve esistere in Supabase Auth)</label>
+            <input id="newCollabEmail" placeholder="es. mario@app.local" />
+          </div>
+          <div class="col">
+            <label>User UID (da Authentication → Users)</label>
+            <input id="newCollabUserId" placeholder="incolla user uid" />
+          </div>
         </div>
+
         <div class="row" style="margin-top:10px;">
-          <button class="btn" id="addCollab">Crea collaboratore</button>
+          <button class="btn" id="addCollabRow">Crea riga collaboratore</button>
         </div>
 
         <div class="divider"></div>
@@ -642,14 +811,7 @@ function renderAdmin(data){
       </div>
 
       <div class="card span-6">
-        <div class="row" style="justify-content:space-between;">
-          <div>
-            <h3>Progetti</h3>
-            <div class="muted">Crea progetti con date. Puoi ordinarli per nome.</div>
-          </div>
-          <button class="btn secondary small" id="sortProjects">Ordina per nome</button>
-        </div>
-
+        <h3>Progetti</h3>
         <div class="divider"></div>
 
         <div class="col">
@@ -681,227 +843,183 @@ function renderAdmin(data){
     </div>
   `;
 
-  document.getElementById("adminBackHome").onclick = ()=>{
-    UI.mode="home"; render();
+  document.getElementById("adminBackHome").onclick = async ()=>{
+    UI.mode="home"; UI.collabSession=null;
+    await signOut();
+    await render();
   };
 
-  document.getElementById("addCollab").onclick = async ()=>{
-    const name = (document.getElementById("newCollabName").value || "").trim();
-    const pass = document.getElementById("newCollabPass").value || "";
+  document.getElementById("addCollabRow").onclick = async ()=>{
+    const name = (document.getElementById("newCollabName").value||"").trim();
     const color = document.getElementById("newCollabColor").value || "#7bed9f";
-    if(!name){ toast("Inserisci un nome"); return; }
-    if(pass.length < 3){ toast("Password troppo corta"); return; }
+    const email = (document.getElementById("newCollabEmail").value||"").trim();
+    const user_id = (document.getElementById("newCollabUserId").value||"").trim();
 
-    const d = loadData();
-    const exists = d.collaborators.some(c=> c.name.toLowerCase() === name.toLowerCase());
-    if(exists){ toast("Nome già esistente"); return; }
+    if(!name){ toast("Inserisci nome"); return; }
+    if(!email){ toast("Inserisci email"); return; }
+    if(!user_id){ toast("Inserisci user uid"); return; }
 
-    const passHash = await sha256(pass);
-    d.collaborators.push({ id: uid("c"), name, passHash, color, createdAt: nowISO() });
-    saveData(d);
-
-    document.getElementById("newCollabName").value="";
-    document.getElementById("newCollabPass").value="";
-    toast("Collaboratore creato");
-    render();
+    try{
+      await adminCreateCollaboratorRow({ name, color, email, user_id });
+      toast("Collaboratore creato");
+      await render();
+    }catch(e){
+      toast("Errore: " + (e.message||""));
+    }
   };
 
-  document.getElementById("addProject").onclick = ()=>{
-    const title = (document.getElementById("newProjTitle").value || "").trim();
-    const subtitle = (document.getElementById("newProjSubtitle").value || "").trim();
-    const start = document.getElementById("newProjStart").value;
-    const end = document.getElementById("newProjEnd").value;
+  document.getElementById("addProject").onclick = async ()=>{
+    const title = (document.getElementById("newProjTitle").value||"").trim();
+    const subtitle = (document.getElementById("newProjSubtitle").value||"").trim();
+    const start_date = document.getElementById("newProjStart").value;
+    const end_date = document.getElementById("newProjEnd").value;
 
-    if(!title){ toast("Inserisci titolo progetto"); return; }
-    if(!start || !end){ toast("Inserisci date inizio/fine"); return; }
-    if(new Date(start) > new Date(end)){ toast("La data fine deve essere dopo la data inizio"); return; }
+    if(!title){ toast("Inserisci titolo"); return; }
+    if(!start_date || !end_date){ toast("Inserisci date"); return; }
+    if(new Date(start_date) > new Date(end_date)){ toast("La data fine deve essere dopo la data inizio"); return; }
 
-    const d = loadData();
-    d.projects.push({ id: uid("p"), title, subtitle, start, end, createdAt: nowISO() });
-    saveData(d);
-
-    document.getElementById("newProjTitle").value="";
-    document.getElementById("newProjSubtitle").value="";
-    document.getElementById("newProjStart").value="";
-    document.getElementById("newProjEnd").value="";
-    toast("Progetto creato");
-    render();
-  };
-
-  document.getElementById("sortProjects").onclick = ()=>{
-    const d = loadData();
-    d.projects.sort((a,b)=> a.title.localeCompare(b.title, "it"));
-    saveData(d);
-    toast("Progetti ordinati");
-    render();
+    try{
+      await adminCreateProject({ title, subtitle, start_date, end_date });
+      toast("Progetto creato");
+      await render();
+    }catch(e){
+      toast("Errore: " + (e.message||""));
+    }
   };
 
   appEl.querySelectorAll("button[data-act]").forEach(btn=>{
-    btn.onclick = ()=>{
+    btn.onclick = async ()=>{
       const act = btn.getAttribute("data-act");
       const id = btn.getAttribute("data-id");
-      if(act==="delCollab") return adminDeleteCollab(id);
-      if(act==="renameCollab") return adminRenameCollab(id);
-      if(act==="delProject") return adminDeleteProject(id);
-      if(act==="renameProject") return adminRenameProject(id);
-    };
-  });
-}
 
-function adminRenameCollab(collabId){
-  const d = loadData();
-  const c = getCollaborator(d, collabId);
-  if(!c){ toast("Collaboratore non trovato"); return; }
-
-  openModal({
-    title: "Rinomina collaboratore",
-    bodyHTML: `
-      <div class="col">
-        <label>Nuovo nome</label>
-        <input id="rnName" value="${escapeAttr(c.name)}" />
-        <label>Nuovo colore</label>
-        <input id="rnColor" type="color" value="${escapeAttr(c.color || "#ffffff")}" />
-        <label>Nuova password (opzionale)</label>
-        <input id="rnPass" type="password" placeholder="Lascia vuoto per non cambiare" autocomplete="off"/>
-      </div>
-    `,
-    okText:"Salva",
-    onOk: async ()=>{
-      const newName = (document.getElementById("rnName").value || "").trim();
-      const newColor = document.getElementById("rnColor").value || c.color;
-      const newPass = document.getElementById("rnPass").value || "";
-
-      if(!newName){ toast("Nome non valido"); return "keep-open"; }
-      const exists = d.collaborators.some(x=> x.id!==c.id && x.name.toLowerCase()===newName.toLowerCase());
-      if(exists){ toast("Esiste già un collaboratore con quel nome"); return "keep-open"; }
-
-      c.name = newName;
-      c.color = newColor;
-      if(newPass.trim()){
-        if(newPass.length < 3){ toast("Password troppo corta"); return "keep-open"; }
-        c.passHash = await sha256(newPass);
+      if(act==="delProject"){
+        openModal({
+          title:"Elimina progetto",
+          bodyHTML:`<div class="muted">Eliminare questo progetto? Verranno eliminate anche le attività.</div>`,
+          okText:"Elimina",
+          onOk: async ()=>{
+            await adminDeleteProject(id);
+            toast("Progetto eliminato");
+            await render();
+          }
+        });
       }
-      saveData(d);
-      toast("Collaboratore aggiornato");
-      render();
-    }
-  });
-}
 
-function adminDeleteCollab(collabId){
-  const d = loadData();
-  const c = getCollaborator(d, collabId);
-  if(!c){ toast("Non trovato"); return; }
+      if(act==="editProject"){
+        const p = getProjectById(UI.cache.projects, id);
+        if(!p) return;
+        openModal({
+          title:"Modifica progetto",
+          bodyHTML: `
+            <div class="col">
+              <label>Titolo</label>
+              <input id="epTitle" value="${escapeAttr(p.title)}" />
+              <label>Sottotitolo</label>
+              <input id="epSub" value="${escapeAttr(p.subtitle||"")}" />
+              <div class="split">
+                <div class="col">
+                  <label>Data inizio</label>
+                  <input id="epStart" type="date" value="${escapeAttr(p.start_date)}" />
+                </div>
+                <div class="col">
+                  <label>Data fine</label>
+                  <input id="epEnd" type="date" value="${escapeAttr(p.end_date)}" />
+                </div>
+              </div>
+            </div>
+          `,
+          okText:"Salva",
+          onOk: async ()=>{
+            const title = (document.getElementById("epTitle").value||"").trim();
+            const subtitle = (document.getElementById("epSub").value||"").trim();
+            const start_date = document.getElementById("epStart").value;
+            const end_date = document.getElementById("epEnd").value;
+            if(!title){ toast("Titolo non valido"); return "keep-open"; }
+            if(new Date(start_date) > new Date(end_date)){ toast("Date non valide"); return "keep-open"; }
+            await adminUpdateProject({ id, title, subtitle, start_date, end_date });
+            toast("Progetto aggiornato");
+            await render();
+          }
+        });
+      }
 
-  openModal({
-    title: "Elimina collaboratore",
-    bodyHTML: `<div class="muted">Eliminare <b>${escapeHtml(c.name)}</b>? Verranno eliminate anche le sue attività.</div>`,
-    okText:"Elimina",
-    onOk: ()=>{
-      const d2 = loadData();
-      d2.collaborators = d2.collaborators.filter(x=>x.id!==collabId);
-      d2.activities = d2.activities.filter(a=>a.collabId!==collabId);
-      saveData(d2);
-      toast("Collaboratore eliminato");
-      render();
-    }
-  });
-}
+      if(act==="delCollab"){
+        openModal({
+          title:"Elimina collaboratore",
+          bodyHTML:`<div class="muted">Eliminare questo collaboratore? Verranno eliminate anche le sue attività (cascade).</div>`,
+          okText:"Elimina",
+          onOk: async ()=>{
+            await adminDeleteCollaborator(id);
+            toast("Collaboratore eliminato");
+            await render();
+          }
+        });
+      }
 
-function adminRenameProject(projectId){
-  const d = loadData();
-  const p = getProject(d, projectId);
-  if(!p){ toast("Progetto non trovato"); return; }
-
-  openModal({
-    title:"Rinomina progetto",
-    bodyHTML: `
-      <div class="col">
-        <label>Titolo</label>
-        <input id="rpTitle" value="${escapeAttr(p.title)}" />
-        <label>Sottotitolo</label>
-        <input id="rpSub" value="${escapeAttr(p.subtitle||"")}" />
-        <div class="split">
-          <div class="col">
-            <label>Data inizio</label>
-            <input id="rpStart" type="date" value="${escapeAttr(p.start)}" />
-          </div>
-          <div class="col">
-            <label>Data fine</label>
-            <input id="rpEnd" type="date" value="${escapeAttr(p.end)}" />
-          </div>
-        </div>
-      </div>
-    `,
-    okText:"Salva",
-    onOk: ()=>{
-      const title = (document.getElementById("rpTitle").value || "").trim();
-      const subtitle = (document.getElementById("rpSub").value || "").trim();
-      const start = document.getElementById("rpStart").value;
-      const end = document.getElementById("rpEnd").value;
-
-      if(!title){ toast("Titolo non valido"); return "keep-open"; }
-      if(!start || !end){ toast("Date non valide"); return "keep-open"; }
-      if(new Date(start) > new Date(end)){ toast("La data fine deve essere dopo la data inizio"); return "keep-open"; }
-
-      p.title = title;
-      p.subtitle = subtitle;
-      p.start = start;
-      p.end = end;
-      saveData(d);
-      toast("Progetto aggiornato");
-      render();
-    }
-  });
-}
-
-function adminDeleteProject(projectId){
-  const d = loadData();
-  const p = getProject(d, projectId);
-  if(!p){ toast("Non trovato"); return; }
-
-  openModal({
-    title:"Elimina progetto",
-    bodyHTML:`<div class="muted">Eliminare <b>${escapeHtml(p.title)}</b>? Verranno eliminate anche le attività del progetto.</div>`,
-    okText:"Elimina",
-    onOk: ()=>{
-      const d2 = loadData();
-      d2.projects = d2.projects.filter(x=>x.id!==projectId);
-      d2.activities = d2.activities.filter(a=>a.projectId!==projectId);
-      saveData(d2);
-      toast("Progetto eliminato");
-      render();
-    }
+      if(act==="editCollab"){
+        const c = getCollaboratorById(UI.cache.collaborators, id);
+        if(!c) return;
+        openModal({
+          title:"Modifica collaboratore",
+          bodyHTML: `
+            <div class="col">
+              <label>Nome</label>
+              <input id="ecName" value="${escapeAttr(c.name)}" />
+              <label>Colore</label>
+              <input id="ecColor" type="color" value="${escapeAttr(c.color||"#7bed9f")}" />
+              <label>Email (deve esistere in Auth)</label>
+              <input id="ecEmail" value="${escapeAttr(c.email||"")}" />
+              <label>User UID (Auth Users)</label>
+              <input id="ecUserId" value="${escapeAttr(c.user_id||"")}" />
+            </div>
+          `,
+          okText:"Salva",
+          onOk: async ()=>{
+            const name = (document.getElementById("ecName").value||"").trim();
+            const color = document.getElementById("ecColor").value || "#7bed9f";
+            const email = (document.getElementById("ecEmail").value||"").trim();
+            const user_id = (document.getElementById("ecUserId").value||"").trim();
+            if(!name){ toast("Nome non valido"); return "keep-open"; }
+            await adminUpdateCollaborator({ id, name, color, email, user_id });
+            toast("Collaboratore aggiornato");
+            await render();
+          }
+        });
+      }
+    };
   });
 }
 
 /** =========================
  *  COLLABORATORE
  *  ========================= */
-function renderCollaborator(data){
-  const collabId = UI.collabSession?.collabId;
-  const c = getCollaborator(data, collabId);
-  if(!c){
-    UI.mode="home"; UI.collabSession=null;
-    render(); return;
+function renderCollaborator(){
+  const session = UI.collabSession;
+  if(!session){
+    UI.mode="home";
+    render();
+    return;
   }
-  setModePill("Collaboratore: " + c.name);
 
-  const projects = data.projects.slice().sort((a,b)=> a.title.localeCompare(b.title, "it"));
+  setModePill("Collaboratore: " + session.name);
+
+  const projects = UI.cache.projects.slice().sort((a,b)=> a.title.localeCompare(b.title, "it"));
+  const acts = UI.cache.activities; // già filtrate da RLS (solo sue)
 
   const cards = projects.map(p=>{
-    const acts = activitiesForProjectAndCollab(data, p.id, collabId);
+    const list = activitiesForProjectAndUser(acts, p.id, session.collabUserId);
     const showAll = !!UI.showAllByProject[p.id];
-    const visible = showAll ? acts : acts.slice(0,10);
+    const visible = showAll ? list : list.slice(0,10);
     const draft = UI.draftByProject[p.id] ?? "";
 
     const items = visible.map(a=>{
       const editMode = UI.editDraftByActivity[a.id] !== undefined;
       const text = editMode ? UI.editDraftByActivity[a.id] : a.text;
+
       return `
         <li>
-          <span class="nameTag" style="color:${escapeAttr(c.color||"#fff")}">${escapeHtml(c.name)}</span>
-          <span class="dateTag">${escapeHtml(formatDateIT(a.createdAt))}</span>
+          <span class="nameTag" style="color:${escapeAttr(session.color||"#fff")}">${escapeHtml(session.name)}</span>
+          <span class="dateTag">${escapeHtml(formatDateIT(a.created_at))}</span>
           ${
             editMode
               ? `<textarea data-editarea="${a.id}">${escapeHtml(text)}</textarea>`
@@ -930,7 +1048,7 @@ function renderCollaborator(data){
           <div>
             <h2 style="margin-bottom:4px;">${escapeHtml(p.title)}</h2>
             <div class="muted">${escapeHtml(p.subtitle||"")}</div>
-            <div class="project-meta">${escapeHtml(p.start)} → ${escapeHtml(p.end)}</div>
+            <div class="project-meta">${escapeHtml(p.start_date)} → ${escapeHtml(p.end_date)}</div>
           </div>
           <div class="status">
             ${
@@ -944,7 +1062,7 @@ function renderCollaborator(data){
         <div class="divider"></div>
 
         <div class="col">
-          <label>Aggiungi attività (solo quando premi “Salva”)</label>
+          <label>Aggiungi attività (si salva solo quando premi “Salva attività”)</label>
           <textarea data-draft="${p.id}" placeholder="Scrivi qui...">${escapeHtml(draft)}</textarea>
           <div class="row">
             <button class="btn" data-act="addAct" data-pid="${p.id}">Salva attività</button>
@@ -955,15 +1073,15 @@ function renderCollaborator(data){
         <div class="divider"></div>
 
         <div class="row" style="justify-content:space-between;">
-          <div class="muted">Le tue attività (ordinate dalla più recente)</div>
+          <div class="muted">Le tue attività (più recente in alto)</div>
           ${
-            acts.length > 10
+            list.length > 10
             ? `<button class="btn secondary small" data-act="toggle" data-pid="${p.id}">${showAll ? "Comprimi" : "Espandi"}</button>`
             : ``
           }
         </div>
 
-        ${acts.length ? `<ul class="activities">${items}</ul>` : `<div class="muted" style="margin-top:10px;">Nessuna attività ancora.</div>`}
+        ${list.length ? `<ul class="activities">${items}</ul>` : `<div class="muted" style="margin-top:10px;">Nessuna attività ancora.</div>`}
       </div>
     `;
   }).join("");
@@ -973,8 +1091,8 @@ function renderCollaborator(data){
       <div class="card span-12">
         <div class="row" style="justify-content:space-between;">
           <div>
-            <h2>Ciao ${escapeHtml(c.name)}</h2>
-            <div class="muted">Vedi tutti i progetti, ma puoi leggere/modificare solo le tue attività.</div>
+            <h2>Ciao ${escapeHtml(session.name)}</h2>
+            <div class="muted">Vedi tutti i progetti, ma solo le tue attività (RLS Supabase).</div>
           </div>
           <button class="btn secondary" id="collabExit">Esci</button>
         </div>
@@ -983,99 +1101,86 @@ function renderCollaborator(data){
     </div>
   `;
 
-  document.getElementById("collabExit").onclick = ()=>{
-    UI.mode="home"; UI.collabSession=null;
-    UI.draftByProject = {};
-    UI.editDraftByActivity = {};
-    render();
+  document.getElementById("collabExit").onclick = async ()=>{
+    await signOut();
+    toast("Logout effettuato");
+    await render();
   };
 
-  // DRAFT input: aggiorna solo memoria, NON localStorage => niente bug cursore
+  // DRAFT: solo memoria => nessun bug cursore
   appEl.querySelectorAll("textarea[data-draft]").forEach(t=>{
     const pid = t.getAttribute("data-draft");
     t.oninput = ()=> { UI.draftByProject[pid] = t.value; };
   });
-
-  // Edit textarea
   appEl.querySelectorAll("textarea[data-editarea]").forEach(t=>{
     const aid = t.getAttribute("data-editarea");
     t.oninput = ()=> { UI.editDraftByActivity[aid] = t.value; };
   });
 
   appEl.querySelectorAll("button[data-act]").forEach(btn=>{
-    btn.onclick = ()=>{
+    btn.onclick = async ()=>{
       const act = btn.getAttribute("data-act");
       const pid = btn.getAttribute("data-pid");
       const id = btn.getAttribute("data-id");
 
-      if(act==="toggle"){
-        UI.showAllByProject[pid] = !UI.showAllByProject[pid];
-        render();
-        return;
-      }
-      if(act==="clearDraft"){
-        UI.draftByProject[pid] = "";
-        render();
-        return;
-      }
+      if(act==="toggle"){ UI.showAllByProject[pid] = !UI.showAllByProject[pid]; renderCollaborator(); return; }
+      if(act==="clearDraft"){ UI.draftByProject[pid] = ""; renderCollaborator(); return; }
+
       if(act==="addAct"){
         const text = (UI.draftByProject[pid] || "").trim();
         if(!text){ toast("Scrivi un'attività"); return; }
-        const d = loadData();
-        d.activities.push({
-          id: uid("a"),
-          projectId: pid,
-          collabId,
-          text,
-          createdAt: nowISO(),
-          updatedAt: nowISO()
-        });
-        saveData(d);
-        UI.draftByProject[pid] = "";
-        toast("Attività salvata");
-        render();
+
+        try{
+          await insertActivity({
+            projectId: pid,
+            collaboratorId: session.collabId,
+            collaboratorUserId: session.collabUserId,
+            text
+          });
+          UI.draftByProject[pid] = "";
+          toast("Attività salvata");
+          await render(); // ricarica da DB
+        }catch(e){
+          toast("Errore salvataggio: " + (e.message||""));
+        }
         return;
       }
+
       if(act==="delAct"){
         openModal({
           title:"Elimina attività",
           bodyHTML:`<div class="muted">Vuoi eliminare questa attività?</div>`,
           okText:"Elimina",
-          onOk: ()=>{
-            const d = loadData();
-            d.activities = d.activities.filter(a=>a.id!==id);
-            saveData(d);
+          onOk: async ()=>{
+            await deleteActivity(id);
             toast("Attività eliminata");
-            render();
+            await render();
           }
         });
         return;
       }
+
       if(act==="edit"){
-        const d = loadData();
-        const a = d.activities.find(x=>x.id===id);
+        const a = UI.cache.activities.find(x=>x.id===id);
         if(!a) return;
         UI.editDraftByActivity[id] = a.text;
-        render();
+        renderCollaborator();
         return;
       }
+
       if(act==="cancelEdit"){
         delete UI.editDraftByActivity[id];
-        render();
+        renderCollaborator();
         return;
       }
+
       if(act==="saveEdit"){
         const newText = (UI.editDraftByActivity[id] || "").trim();
         if(!newText){ toast("Testo vuoto"); return; }
-        const d = loadData();
-        const a = d.activities.find(x=>x.id===id);
-        if(!a) return;
-        a.text = newText;
-        a.updatedAt = nowISO();
-        saveData(d);
+        await updateActivity({ id, text: newText });
         delete UI.editDraftByActivity[id];
         toast("Modifica salvata");
-        render();
+        await render();
         return;
       }
     };
@@ -1085,248 +1190,17 @@ function renderCollaborator(data){
 /** =========================
  *  DASHBOARD
  *  ========================= */
-function renderDashboard(data){
-  setModePill("Dashboard");
-
-  const collabs = data.collaborators.slice().sort((a,b)=> a.name.localeCompare(b.name, "it"));
-  const projects = data.projects.slice().sort((a,b)=> a.title.localeCompare(b.title, "it"));
-
-  // KPI Collaboratori
-  const collabKpis = collabs.map(c=>{
-    const last = lastActivityDateForCollab(data, c.id);
-    const dot = trafficColorForDate(last);
-    return `
-      <div class="kpi">
-        <div>
-          <div style="display:flex; align-items:center; gap:10px;">
-            <span class="dot" style="background:${dot}"></span>
-            <b>${escapeHtml(c.name)}</b>
-            <span class="square" style="background:${escapeAttr(c.color||"#fff")}; margin-left:6px;"></span>
-          </div>
-          <div class="muted" style="font-size:12px;">
-            Ultima attività: ${last ? escapeHtml(formatDateIT(last)) : "—"}
-          </div>
-        </div>
-      </div>
-    `;
-  }).join("");
-
-  // Filtri
-  const projOpts = [`<option value="all">Tutti i progetti</option>`]
-    .concat(projects.map(p=>`<option value="${p.id}">${escapeHtml(p.title)}</option>`)).join("");
-  const collOpts = [`<option value="all">Tutti i collaboratori</option>`]
-    .concat(collabs.map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`)).join("");
-
-  const filterCard = `
-    <div class="card span-12">
-      <div class="row" style="justify-content:space-between;">
-        <div>
-          <h2>Dashboard</h2>
-          <div class="muted">Vista completa + export PDF.</div>
-        </div>
-        <button class="btn secondary" id="dashExit">Esci</button>
-      </div>
-
-      <div class="divider"></div>
-
-      <div class="grid" style="margin-top:0;">
-        <div class="card span-12" style="background:rgba(255,255,255,.03);">
-          <h3>Filtri (per export e visualizzazione)</h3>
-          <div class="grid" style="margin-top:10px;">
-            <div class="span-3">
-              <label>Data</label>
-              <select id="fDatePreset">
-                <option value="all">Tutte</option>
-                <option value="last7">Ultimi 7GG</option>
-                <option value="custom">Custom</option>
-              </select>
-            </div>
-            <div class="span-3">
-              <label>Da (custom)</label>
-              <input id="fFrom" type="date" />
-            </div>
-            <div class="span-3">
-              <label>A (custom)</label>
-              <input id="fTo" type="date" />
-            </div>
-            <div class="span-3">
-              <label>Progetto</label>
-              <select id="fProject">${projOpts}</select>
-            </div>
-
-            <div class="span-4">
-              <label>Collaboratore</label>
-              <select id="fCollab">${collOpts}</select>
-            </div>
-
-            <div class="span-8">
-              <label>&nbsp;</label>
-              <div class="row">
-                <button class="btn" id="applyFilters">Applica filtri</button>
-                <button class="btn secondary" id="clearFilters">Azzera</button>
-                <button class="btn secondary" id="pdfTable">Export PDF (tabella)</button>
-                <button class="btn secondary" id="pdfEditorial">Export PDF (editoriale)</button>
-              </div>
-              <div class="hint" style="margin-top:6px;">
-                Il PDF tabellare usa un effetto "collaboratore non ripetuto" per attività consecutive nello stesso progetto.
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="card span-12" style="background:rgba(255,255,255,.03);">
-          <h3>Collaboratori (semaforo ultima attività)</h3>
-          <div class="grid" style="margin-top:10px;">
-            <div class="span-12">
-              <div class="row" style="gap:10px; flex-wrap:wrap;">
-                <span class="badge"><span class="dot" style="background:var(--green)"></span> entro 7 giorni</span>
-                <span class="badge"><span class="dot" style="background:var(--orange)"></span> 8–10 giorni</span>
-                <span class="badge"><span class="dot" style="background:var(--red)"></span> 11+ giorni</span>
-              </div>
-            </div>
-            <div class="span-12" style="display:grid; grid-template-columns:repeat(3,1fr); gap:10px;" id="collabKpisWrap">
-              ${collabKpis || `<div class="muted">Nessun collaboratore.</div>`}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  `;
-
-  // cards progetti con attività
-  const projectCards = projects.map(p=>{
-    const allActs = activitiesForProject(data, p.id);
-    const filtered = applyActivityFilters(data, allActs, UI.filters);
-    const showAll = !!UI.dashShowAllByProject[p.id];
-    const visible = showAll ? filtered : filtered.slice(0,10);
-
-    const resources = uniqueCollabsInProject({ ...data, activities: filtered }, p.id);
-    const resNames = resources.map(r=>`<span style="margin-right:10px;">${escapeHtml(r.name)}</span>`).join("");
-
-    const items = visible.map(a=>{
-      const coll = getCollaborator(data, a.collabId);
-      const name = coll?.name || "Sconosciuto";
-      const color = coll?.color || "#ffffff";
-      return `
-        <li>
-          <span class="nameTag" style="color:${escapeAttr(color)}">${escapeHtml(name)}</span>
-          <span class="dateTag">${escapeHtml(formatDateIT(a.createdAt))}</span>
-          <span class="activityText">${escapeHtml(a.text)}</span>
-        </li>
-      `;
-    }).join("");
-
-    return `
-      <div class="card span-6">
-        <div class="project-title">
-          <div>
-            <h2 style="margin-bottom:4px;">${escapeHtml(p.title)}</h2>
-            <div class="muted">${escapeHtml(p.subtitle||"")}</div>
-            <div class="project-meta">${escapeHtml(p.start)} → ${escapeHtml(p.end)}</div>
-            <div class="resources"><b>Risorse interessate:</b> ${resNames || `<span class="muted">—</span>`}</div>
-          </div>
-          <div class="status">
-            ${
-              projectStatus(p)==="in corso"
-              ? `<span class="badge"><span class="square" style="background:var(--green)"></span> in corso</span>`
-              : `<span class="badge"><span class="square" style="background:var(--red)"></span> terminato</span>`
-            }
-          </div>
-        </div>
-
-        <div class="divider"></div>
-
-        <div class="row" style="justify-content:space-between;">
-          <div class="muted">Attività (ordinate dalla più recente)</div>
-          ${
-            filtered.length > 10
-              ? `<button class="btn secondary small" data-act="toggleDash" data-pid="${p.id}">${showAll ? "Comprimi" : "Espandi"}</button>`
-              : ``
-          }
-        </div>
-
-        ${filtered.length ? `<ul class="activities">${items}</ul>` : `<div class="muted" style="margin-top:10px;">Nessuna attività (con i filtri attuali).</div>`}
-      </div>
-    `;
-  }).join("");
-
-  appEl.innerHTML = `
-    <div class="grid">
-      ${filterCard}
-      ${projectCards || `<div class="card span-12"><div class="muted">Nessun progetto.</div></div>`}
-    </div>
-  `;
-
-  // init filtri UI
-  document.getElementById("fDatePreset").value = UI.filters.datePreset;
-  document.getElementById("fFrom").value = UI.filters.dateFrom;
-  document.getElementById("fTo").value = UI.filters.dateTo;
-  document.getElementById("fProject").value = UI.filters.projectId;
-  document.getElementById("fCollab").value = UI.filters.collabId;
-
-  document.getElementById("dashExit").onclick = ()=>{
-    UI.mode="home";
-    render();
-  };
-
-  document.getElementById("applyFilters").onclick = ()=>{
-    UI.filters.datePreset = document.getElementById("fDatePreset").value;
-    UI.filters.dateFrom = document.getElementById("fFrom").value;
-    UI.filters.dateTo = document.getElementById("fTo").value;
-    UI.filters.projectId = document.getElementById("fProject").value;
-    UI.filters.collabId = document.getElementById("fCollab").value;
-    toast("Filtri applicati");
-    render();
-  };
-  document.getElementById("clearFilters").onclick = ()=>{
-    UI.filters = { datePreset:"all", dateFrom:"", dateTo:"", projectId:"all", collabId:"all" };
-    toast("Filtri azzerati");
-    render();
-  };
-
-  document.getElementById("pdfTable").onclick = ()=> exportPdfTable(loadData(), UI.filters);
-  document.getElementById("pdfEditorial").onclick = ()=> exportPdfEditorial(loadData(), UI.filters);
-
-  appEl.querySelectorAll("button[data-act='toggleDash']").forEach(btn=>{
-    btn.onclick = ()=>{
-      const pid = btn.getAttribute("data-pid");
-      UI.dashShowAllByProject[pid] = !UI.dashShowAllByProject[pid];
-      render();
-    };
-  });
+function describeFilters(filters){
+  const parts = [];
+  if(filters.datePreset==="all") parts.push("Data: tutte");
+  if(filters.datePreset==="last7") parts.push("Data: ultimi 7gg");
+  if(filters.datePreset==="custom") parts.push(`Data: ${filters.dateFrom||"—"} → ${filters.dateTo||"—"}`);
+  if(filters.projectId!=="all") parts.push("Progetto selezionato");
+  if(filters.collabId!=="all") parts.push("Collaboratore selezionato");
+  return parts.join(" | ") || "nessuno";
 }
 
-function applyActivityFilters(data, acts, filters){
-  let out = acts.slice();
-
-  // progetto
-  if(filters.projectId !== "all"){
-    out = out.filter(a=>a.projectId === filters.projectId);
-  }
-  // collaboratore
-  if(filters.collabId !== "all"){
-    out = out.filter(a=>a.collabId === filters.collabId);
-  }
-  // data
-  if(filters.datePreset === "last7"){
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - 7);
-    out = out.filter(a=> new Date(a.createdAt) >= cutoff);
-  } else if(filters.datePreset === "custom"){
-    const from = filters.dateFrom ? new Date(filters.dateFrom + "T00:00:00") : null;
-    const to = filters.dateTo ? new Date(filters.dateTo + "T23:59:59") : null;
-    if(from) out = out.filter(a=> new Date(a.createdAt) >= from);
-    if(to) out = out.filter(a=> new Date(a.createdAt) <= to);
-  }
-  // ordinamento recente->vecchia
-  out.sort((a,b)=> new Date(b.createdAt) - new Date(a.createdAt));
-  return out;
-}
-
-/** =========================
- *  Export PDF
- *  ========================= */
-function exportPdfTable(data, filters){
+function exportPdfTable(collaborators, projects, activities, filters){
   if(!window.jspdf || !window.jspdf.jsPDF){
     toast("Librerie PDF non caricate (riprova tra 1 secondo)");
     return;
@@ -1334,64 +1208,54 @@ function exportPdfTable(data, filters){
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit:"pt", format:"a4" });
 
-  const title = "Export Attività (Tabella)";
   doc.setFont("helvetica","bold");
   doc.setFontSize(16);
-  doc.text(title, 40, 40);
+  doc.text("Export Attività (Tabella)", 40, 40);
 
   doc.setFont("helvetica","normal");
   doc.setFontSize(10);
-  doc.text("Filtri: " + describeFilters(data, filters), 40, 58);
+  doc.text("Filtri: " + describeFilters(filters), 40, 58);
 
-  // prendiamo tutte le attività filtrate, poi le trasformiamo in righe
-  const allActs = applyActivityFilters(data, data.activities, filters);
+  const allActs = applyActivityFilters(activities, filters);
 
-  // costruiamo righe ordinate per progetto, poi data desc (così il "non ripetere collaboratore" risulta pulito)
-  const rowsSorted = allActs
-    .slice()
-    .sort((a,b)=>{
-      const pA = (getProject(data,a.projectId)?.title || "").toLowerCase();
-      const pB = (getProject(data,b.projectId)?.title || "").toLowerCase();
-      if(pA < pB) return -1;
-      if(pA > pB) return 1;
-      // stesso progetto: ordina per collab poi data desc (per "merge-like")
-      const cA = (getCollaborator(data,a.collabId)?.name || "").toLowerCase();
-      const cB = (getCollaborator(data,b.collabId)?.name || "").toLowerCase();
-      if(cA < cB) return -1;
-      if(cA > cB) return 1;
-      return new Date(b.createdAt) - new Date(a.createdAt);
-    });
+  // ordine: progetto, collaboratore, data desc
+  const rowsSorted = allActs.slice().sort((a,b)=>{
+    const pA = (getProjectById(projects,a.project_id)?.title || "").toLowerCase();
+    const pB = (getProjectById(projects,b.project_id)?.title || "").toLowerCase();
+    if(pA < pB) return -1;
+    if(pA > pB) return 1;
 
-  // effetto "merge-like": se stesso progetto + stesso collaboratore e consecutive, lasciamo cella vuota
+    const cA = (collaborators.find(x=>x.user_id===a.collaborator_user_id)?.name || "").toLowerCase();
+    const cB = (collaborators.find(x=>x.user_id===b.collaborator_user_id)?.name || "").toLowerCase();
+    if(cA < cB) return -1;
+    if(cA > cB) return 1;
+
+    return new Date(b.created_at)-new Date(a.created_at);
+  });
+
   let prevKey = null;
   const body = rowsSorted.map(a=>{
-    const p = getProject(data, a.projectId);
-    const c = getCollaborator(data, a.collabId);
+    const p = getProjectById(projects, a.project_id);
+    const c = collaborators.find(x=>x.user_id===a.collaborator_user_id);
     const projName = p?.title || "—";
     const collName = c?.name || "—";
-    const key = a.projectId + "|" + a.collabId;
+    const key = a.project_id + "|" + a.collaborator_user_id;
 
     const collCell = (prevKey === key) ? "" : collName;
     prevKey = key;
 
-    const actText = `${formatDayIT(a.createdAt)} — ${a.text}`;
+    const actText = `${formatDayIT(a.created_at)} — ${a.text}`;
     return [projName, actText, collCell];
   });
 
-  // AutoTable
   doc.autoTable({
     startY: 75,
     head: [["NOME PROGETTI", "ATTIVITÁ SVOLTE", "COLLABORATORI"]],
     body,
     styles: { font:"helvetica", fontSize:9, cellPadding:6, overflow:"linebreak" },
     headStyles: { fillColor: [20, 30, 60] },
-    columnStyles: {
-      0: { cellWidth: 140 },
-      1: { cellWidth: 280 },
-      2: { cellWidth: 110 }
-    },
+    columnStyles: { 0:{cellWidth:140}, 1:{cellWidth:280}, 2:{cellWidth:110} },
     didParseCell: function (hookData) {
-      // Se la cella collaboratore è vuota, attenuiamo bordo superiore per un effetto "merge"
       if(hookData.section === "body" && hookData.column.index === 2 && hookData.cell.raw === ""){
         hookData.cell.styles.textColor = [120,130,170];
         hookData.cell.styles.lineWidth = 0.2;
@@ -1402,7 +1266,7 @@ function exportPdfTable(data, filters){
   doc.save("export_attivita_tabella.pdf");
 }
 
-function exportPdfEditorial(data, filters){
+function exportPdfEditorial(collaborators, projects, activities, filters){
   if(!window.jspdf || !window.jspdf.jsPDF){
     toast("Librerie PDF non caricate (riprova tra 1 secondo)");
     return;
@@ -1416,28 +1280,25 @@ function exportPdfEditorial(data, filters){
 
   doc.setFont("helvetica","normal");
   doc.setFontSize(10);
-  doc.text("Filtri: " + describeFilters(data, filters), 40, 58);
+  doc.text("Filtri: " + describeFilters(filters), 40, 58);
 
-  // attività filtrate
-  const acts = applyActivityFilters(data, data.activities, filters);
+  const acts = applyActivityFilters(activities, filters);
 
-  // raggruppa per progetto
   const byProject = new Map();
   for(const a of acts){
-    if(!byProject.has(a.projectId)) byProject.set(a.projectId, []);
-    byProject.get(a.projectId).push(a);
+    if(!byProject.has(a.project_id)) byProject.set(a.project_id, []);
+    byProject.get(a.project_id).push(a);
   }
 
   let y = 80;
-
-  const projectIds = Array.from(byProject.keys())
-    .sort((idA,idB)=> (getProject(data,idA)?.title||"").localeCompare(getProject(data,idB)?.title||"", "it"));
+  const projectIds = Array.from(byProject.keys()).sort((idA,idB)=>{
+    return (getProjectById(projects,idA)?.title||"").localeCompare((getProjectById(projects,idB)?.title||""), "it");
+  });
 
   for(const pid of projectIds){
-    const p = getProject(data, pid);
+    const p = getProjectById(projects, pid);
     const list = byProject.get(pid) || [];
 
-    // nuova pagina se necessario
     if(y > 760){ doc.addPage(); y = 40; }
 
     doc.setFont("helvetica","bold");
@@ -1447,32 +1308,31 @@ function exportPdfEditorial(data, filters){
     doc.setFont("helvetica","normal");
     doc.setFontSize(10);
     doc.text(`${p?.subtitle || ""}`, 40, y); y += 14;
-    doc.text(`Date: ${p?.start || "—"} → ${p?.end || "—"}  |  Stato: ${projectStatus(p||{end:"2099-01-01"})}`, 40, y); y += 14;
+    doc.text(`Date: ${p?.start_date || "—"} → ${p?.end_date || "—"}  |  Stato: ${projectStatus(p||{end_date:"2099-01-01"})}`, 40, y); y += 14;
 
-    // risorse
-    const resources = uniqueCollabsInProject({ ...data, activities: list }, pid).map(c=>c.name).join(", ");
-    doc.setFont("helvetica","bold");
-    doc.text("Risorse interessate: ", 40, y);
-    doc.setFont("helvetica","normal");
-    doc.text(resources || "—", 160, y);
+    const resources = uniqueCollabsInProject(list, collaborators, pid).map(c=>c.name).join(", ");
+    doc.setFont("helvetica","bold"); doc.text("Risorse interessate: ", 40, y);
+    doc.setFont("helvetica","normal"); doc.text(resources || "—", 160, y);
     y += 14;
 
-    // prepara tabella editoriale: righe = collaboratore, attività bullet nel campo
     const byCollab = new Map();
     for(const a of list){
-      if(!byCollab.has(a.collabId)) byCollab.set(a.collabId, []);
-      byCollab.get(a.collabId).push(a);
+      if(!byCollab.has(a.collaborator_user_id)) byCollab.set(a.collaborator_user_id, []);
+      byCollab.get(a.collaborator_user_id).push(a);
     }
 
     const body = [];
-    const collabIds = Array.from(byCollab.keys())
-      .sort((a,b)=> (getCollaborator(data,a)?.name||"").localeCompare(getCollaborator(data,b)?.name||"", "it"));
+    const collabUserIds = Array.from(byCollab.keys()).sort((a,b)=>{
+      const nA = (collaborators.find(x=>x.user_id===a)?.name||"");
+      const nB = (collaborators.find(x=>x.user_id===b)?.name||"");
+      return nA.localeCompare(nB, "it");
+    });
 
-    for(const cid of collabIds){
-      const c = getCollaborator(data, cid);
-      const items = (byCollab.get(cid) || [])
-        .sort((a,b)=> new Date(b.createdAt)-new Date(a.createdAt))
-        .map(a=> `• ${formatDayIT(a.createdAt)} — ${a.text}`)
+    for(const cuid of collabUserIds){
+      const c = collaborators.find(x=>x.user_id===cuid);
+      const items = (byCollab.get(cuid) || [])
+        .sort((a,b)=> new Date(b.created_at)-new Date(a.created_at))
+        .map(a=> `• ${formatDayIT(a.created_at)} — ${a.text}`)
         .join("\n");
 
       body.push([c?.name || "—", items]);
@@ -1494,63 +1354,63 @@ function exportPdfEditorial(data, filters){
   doc.save("export_attivita_editoriale.pdf");
 }
 
-function describeFilters(data, f){
-  const parts = [];
-  if(f.datePreset==="all") parts.push("Data: tutte");
-  if(f.datePreset==="last7") parts.push("Data: ultimi 7gg");
-  if(f.datePreset==="custom") parts.push(`Data: ${f.dateFrom||"—"} → ${f.dateTo||"—"}`);
-  if(f.projectId!=="all") parts.push("Progetto: " + (getProject(data,f.projectId)?.title || "—"));
-  if(f.collabId!=="all") parts.push("Collaboratore: " + (getCollaborator(data,f.collabId)?.name || "—"));
-  return parts.join(" | ") || "nessuno";
-}
+function renderDashboard(){
+  setModePill("Dashboard");
 
-/** =========================
- *  Sicurezza/UX: escape HTML
- *  ========================= */
-function escapeHtml(str){
-  return String(str ?? "")
-    .replaceAll("&","&amp;")
-    .replaceAll("<","&lt;")
-    .replaceAll(">","&gt;")
-    .replaceAll('"',"&quot;")
-    .replaceAll("'","&#039;");
-}
-function escapeAttr(str){ return escapeHtml(str).replaceAll("`","&#096;"); }
+  const collaborators = UI.cache.collaborators.slice().sort((a,b)=> a.name.localeCompare(b.name, "it"));
+  const projects = UI.cache.projects.slice().sort((a,b)=> a.title.localeCompare(b.title, "it"));
+  const allActs = UI.cache.activities;
 
-/** =========================
- *  Pulsanti globali
- *  ========================= */
-document.getElementById("btnHome").onclick = ()=>{
-  UI.mode="home";
-  UI.collabSession=null;
-  UI.editDraftByActivity = {};
-  render();
-};
+  const collabKpis = collaborators.map(c=>{
+    const last = lastActivityDateForCollab(allActs, c.user_id);
+    const dot = trafficColorForDate(last);
+    return `
+      <div class="kpi">
+        <div>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span class="dot" style="background:${dot}"></span>
+            <b>${escapeHtml(c.name)}</b>
+            <span class="square" style="background:${escapeAttr(c.color||"#fff")}; margin-left:6px;"></span>
+          </div>
+          <div class="muted" style="font-size:12px;">
+            Ultima attività: ${last ? escapeHtml(formatDateIT(last)) : "—"}
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
 
-document.getElementById("btnReset").onclick = ()=>{
-  openModal({
-    title:"Reset dati",
-    bodyHTML:`<div class="muted">Cancella tutti i dati salvati in locale (solo test). Continuare?</div>`,
-    okText:"Reset",
-    onOk: ()=>{
-      resetData();
-      UI.mode="home";
-      UI.collabSession=null;
-      UI.draftByProject = {};
-      UI.editDraftByActivity = {};
-      UI.showAllByProject = {};
-      UI.dashShowAllByProject = {};
-      UI.filters = { datePreset:"all", dateFrom:"", dateTo:"", projectId:"all", collabId:"all" };
-      toast("Dati resettati");
-      render();
-    }
-  });
-};
+  const projOpts = [`<option value="all">Tutti i progetti</option>`]
+    .concat(projects.map(p=>`<option value="${p.id}">${escapeHtml(p.title)}</option>`)).join("");
 
-/** =========================
- *  Boot
- *  ========================= */
-render();
-</script>
-</body>
-</html>
+  const collOpts = [`<option value="all">Tutti i collaboratori</option>`]
+    .concat(collaborators.map(c=>`<option value="${c.user_id}">${escapeHtml(c.name)}</option>`)).join("");
+
+  const projectCards = projects.map(p=>{
+    const projActs = activitiesForProject(allActs, p.id);
+    const filtered = applyActivityFilters(projActs, UI.filters);
+
+    const showAll = !!UI.dashShowAllByProject[p.id];
+    const visible = showAll ? filtered : filtered.slice(0,10);
+
+    const resources = uniqueCollabsInProject(filtered, collaborators, p.id);
+    const resNames = resources.map(r=>`<span style="margin-right:10px;"><b>${escapeHtml(r.name)}</b></span>`).join("");
+
+    const items = visible.map(a=>{
+      const coll = collaborators.find(c=>c.user_id===a.collaborator_user_id);
+      const name = coll?.name || "Sconosciuto";
+      const color = coll?.color || "#ffffff";
+      return `
+        <li>
+          <span class="nameTag" style="color:${escapeAttr(color)}">${escapeHtml(name)}</span>
+          <span class="dateTag">${escapeHtml(formatDateIT(a.created_at))}</span>
+          <span class="activityText">${escapeHtml(a.text)}</span>
+        </li>
+      `;
+    }).join("");
+
+    return `
+      <div class="card span-6">
+        <div class="project-title">
+          <div>
+            <h2 style="margin
